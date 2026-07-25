@@ -19,14 +19,14 @@ TEXTURES	:=
 TARGET		:=	$(notdir $(CURDIR))
 BUILD		:=	build
 SOURCES		:=	source
-DATA		:=	data
+DATA		:=	data data/roms
 INCLUDES	:=
 
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
 
-CFLAGS	= -g -O2 -mrvl -Wall $(MACHDEP) $(INCLUDE)
+CFLAGS	= -g -O2 -mrvl -Wall $(MACHDEP) $(INCLUDE) $(EXTRA_CFLAGS)
 CXXFLAGS	=	$(CFLAGS)
 
 LDFLAGS	=	-g $(MACHDEP) -mrvl -Wl,-Map,$(notdir $@).map
@@ -36,13 +36,18 @@ LDFLAGS	=	-g $(MACHDEP) -mrvl -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 LIBS	:= -lgrrlib -lfreetype -lpngu -lpng -ljpeg -lz -lfat
 LIBS	+= -lwiiuse
-LIBS	+= -lmodplay -laesnd
+LIBS	+= -lmodplay -lasnd -laesnd
 LIBS	+= -lbte -logc -lm
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
 # include and lib
 #---------------------------------------------------------------------------------
-LIBDIRS	:= $(CURDIR)/$(GRRLIB)
+# GRRLIB and its dependencies (freetype/libpng/libjpeg/zlib/pngu) are looked up
+# in a local portlibs-local tree first, then the shared devkitPro portlibs tree.
+# portlibs-local is not committed (see the README for the deps to build); if it
+# is absent, those two paths are simply ignored and $(PORTLIBS) is used instead.
+LIBDIRS	:= $(CURDIR)/portlibs-local/wii
+LIBDIRS	+= $(CURDIR)/portlibs-local/ppc
 LIBDIRS	+= $(PORTLIBS)
 
 #---------------------------------------------------------------------------------
@@ -90,6 +95,7 @@ export OFILES	:=	$(addsuffix .o,$(BINFILES)) \
 #---------------------------------------------------------------------------------
 export INCLUDE	:=	$(foreach dir,$(INCLUDES), -iquote $(CURDIR)/$(dir)) \
 					$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+					-I$(CURDIR)/portlibs-local/ppc/include/freetype2 \
 					-I$(CURDIR)/$(BUILD) \
 					-I$(LIBOGC_INC) -I$(PORTLIBS)
 
@@ -156,6 +162,16 @@ $(OUTPUT).elf: $(OFILES)
 # This rule links in binary data with the .dat extension
 #---------------------------------------------------------------------------------
 %.dat.o	:	%.dat
+#---------------------------------------------------------------------------------
+	@echo $(notdir $<)
+	$(bin2o)
+
+-include $(DEPENDS)
+
+#---------------------------------------------------------------------------------
+# This rule links in binary data with the .vec extension (bundled ROMs)
+#---------------------------------------------------------------------------------
+%.vec.o	:	%.vec
 #---------------------------------------------------------------------------------
 	@echo $(notdir $<)
 	$(bin2o)

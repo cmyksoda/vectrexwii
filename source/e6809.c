@@ -12,6 +12,11 @@
 
 #define einline __inline
 
+#ifdef VECX_TRACE
+/* host-side diagnostics hook (native reproduction harness only). */
+void vecx_trace_irq (void);
+#endif
+
 enum {
 	FLAG_E		= 0x80,
 	FLAG_F		= 0x40,
@@ -287,7 +292,7 @@ static einline unsigned ea_extended (void)
 
 static einline unsigned ea_indexed (unsigned *cycles)
 {
-	unsigned r, op, ea;
+	unsigned r, op, ea = 0; /* undocumented postbyte encodings still yield a defined ea */
 
 	/* post byte */
 
@@ -512,7 +517,7 @@ static einline unsigned ea_indexed (unsigned *cycles)
  * essentially (0 - data).
  */
 
-einline unsigned inst_neg (unsigned data)
+static einline unsigned inst_neg (unsigned data)
 {
 	unsigned i0, i1, r;
 
@@ -531,7 +536,7 @@ einline unsigned inst_neg (unsigned data)
 
 /* instruction: com */
 
-einline unsigned inst_com (unsigned data)
+static einline unsigned inst_com (unsigned data)
 {
 	unsigned r;
 
@@ -549,7 +554,7 @@ einline unsigned inst_com (unsigned data)
  * cannot be faked as an add or substract.
  */
 
-einline unsigned inst_lsr (unsigned data)
+static einline unsigned inst_lsr (unsigned data)
 {
 	unsigned r;
 
@@ -566,7 +571,7 @@ einline unsigned inst_lsr (unsigned data)
  * cannot be faked as an add or substract.
  */
 
-einline unsigned inst_ror (unsigned data)
+static einline unsigned inst_ror (unsigned data)
 {
 	unsigned r, c;
 
@@ -584,7 +589,7 @@ einline unsigned inst_ror (unsigned data)
  * cannot be faked as an add or substract.
  */
 
-einline unsigned inst_asr (unsigned data)
+static einline unsigned inst_asr (unsigned data)
 {
 	unsigned r;
 
@@ -601,7 +606,7 @@ einline unsigned inst_asr (unsigned data)
  * essentially (data + data). simple addition.
  */
 
-einline unsigned inst_asl (unsigned data)
+static einline unsigned inst_asl (unsigned data)
 {
 	unsigned i0, i1, r;
 
@@ -622,7 +627,7 @@ einline unsigned inst_asl (unsigned data)
  * essentially (data + data + carry). addition with carry.
  */
 
-einline unsigned inst_rol (unsigned data)
+static einline unsigned inst_rol (unsigned data)
 {
 	unsigned i0, i1, c, r;
 
@@ -643,7 +648,7 @@ einline unsigned inst_rol (unsigned data)
  * essentially (data - 1).
  */
 
-einline unsigned inst_dec (unsigned data)
+static einline unsigned inst_dec (unsigned data)
 {
 	unsigned i0, i1, r;
 
@@ -662,7 +667,7 @@ einline unsigned inst_dec (unsigned data)
  * essentially (data + 1).
  */
 
-einline unsigned inst_inc (unsigned data)
+static einline unsigned inst_inc (unsigned data)
 {
 	unsigned i0, i1, r;
 
@@ -679,14 +684,14 @@ einline unsigned inst_inc (unsigned data)
 
 /* instruction: tst */
 
-einline void inst_tst8 (unsigned data)
+static einline void inst_tst8 (unsigned data)
 {
 	set_cc (FLAG_N, test_n (data));
 	set_cc (FLAG_Z, test_z8 (data));
 	set_cc (FLAG_V, 0);
 }
 
-einline void inst_tst16 (unsigned data)
+static einline void inst_tst16 (unsigned data)
 {
 	set_cc (FLAG_N, test_n (data >> 8));
 	set_cc (FLAG_Z, test_z16 (data));
@@ -695,7 +700,7 @@ einline void inst_tst16 (unsigned data)
 
 /* instruction: clr */
 
-einline void inst_clr (void)
+static einline void inst_clr (void)
 {
 	set_cc (FLAG_N, 0);
 	set_cc (FLAG_Z, 1);
@@ -705,7 +710,7 @@ einline void inst_clr (void)
 
 /* instruction: suba/subb */
 
-einline unsigned inst_sub8 (unsigned data0, unsigned data1)
+static einline unsigned inst_sub8 (unsigned data0, unsigned data1)
 {
 	unsigned i0, i1, r;
 
@@ -726,7 +731,7 @@ einline unsigned inst_sub8 (unsigned data0, unsigned data1)
  * only 8-bit version, 16-bit version not needed.
  */
 
-einline unsigned inst_sbc (unsigned data0, unsigned data1)
+static einline unsigned inst_sbc (unsigned data0, unsigned data1)
 {
 	unsigned i0, i1, c, r;
 
@@ -748,7 +753,7 @@ einline unsigned inst_sbc (unsigned data0, unsigned data1)
  * only 8-bit version, 16-bit version not needed.
  */
 
-einline unsigned inst_and (unsigned data0, unsigned data1)
+static einline unsigned inst_and (unsigned data0, unsigned data1)
 {
 	unsigned r;
 
@@ -763,7 +768,7 @@ einline unsigned inst_and (unsigned data0, unsigned data1)
  * only 8-bit version, 16-bit version not needed.
  */
 
-einline unsigned inst_eor (unsigned data0, unsigned data1)
+static einline unsigned inst_eor (unsigned data0, unsigned data1)
 {
 	unsigned r;
 
@@ -778,7 +783,7 @@ einline unsigned inst_eor (unsigned data0, unsigned data1)
  * only 8-bit version, 16-bit version not needed.
  */
 
-einline unsigned inst_adc (unsigned data0, unsigned data1)
+static einline unsigned inst_adc (unsigned data0, unsigned data1)
 {
 	unsigned i0, i1, c, r;
 
@@ -800,7 +805,7 @@ einline unsigned inst_adc (unsigned data0, unsigned data1)
  * only 8-bit version, 16-bit version not needed.
  */
 
-einline unsigned inst_or (unsigned data0, unsigned data1)
+static einline unsigned inst_or (unsigned data0, unsigned data1)
 {
 	unsigned r;
 
@@ -813,7 +818,7 @@ einline unsigned inst_or (unsigned data0, unsigned data1)
 
 /* instruction: adda/addb */
 
-einline unsigned inst_add8 (unsigned data0, unsigned data1)
+static einline unsigned inst_add8 (unsigned data0, unsigned data1)
 {
 	unsigned i0, i1, r;
 
@@ -832,7 +837,7 @@ einline unsigned inst_add8 (unsigned data0, unsigned data1)
 
 /* instruction: addd */
 
-einline unsigned inst_add16 (unsigned data0, unsigned data1)
+static einline unsigned inst_add16 (unsigned data0, unsigned data1)
 {
 	unsigned i0, i1, r;
 
@@ -850,7 +855,7 @@ einline unsigned inst_add16 (unsigned data0, unsigned data1)
 
 /* instruction: subd */
 
-einline unsigned inst_sub16 (unsigned data0, unsigned data1)
+static einline unsigned inst_sub16 (unsigned data0, unsigned data1)
 {
 	unsigned i0, i1, r;
 
@@ -868,7 +873,7 @@ einline unsigned inst_sub16 (unsigned data0, unsigned data1)
 
 /* instruction: 8-bit offset branch */
 
-einline void inst_bra8 (unsigned test, unsigned op, unsigned *cycles)
+static einline void inst_bra8 (unsigned test, unsigned op, unsigned *cycles)
 {
 	unsigned offset, mask;
 
@@ -884,7 +889,7 @@ einline void inst_bra8 (unsigned test, unsigned op, unsigned *cycles)
 
 /* instruction: 16-bit offset branch */
 
-einline void inst_bra16 (unsigned test, unsigned op, unsigned *cycles)
+static einline void inst_bra16 (unsigned test, unsigned op, unsigned *cycles)
 {
 	unsigned offset, mask;
 
@@ -900,7 +905,7 @@ einline void inst_bra16 (unsigned test, unsigned op, unsigned *cycles)
 
 /* instruction: pshs/pshu */
 
-einline void inst_psh (unsigned op, unsigned *sp,
+static einline void inst_psh (unsigned op, unsigned *sp,
 					   unsigned data, unsigned *cycles)
 {
 	if (op & 0x80) {
@@ -947,7 +952,7 @@ einline void inst_psh (unsigned op, unsigned *sp,
 
 /* instruction: puls/pulu */
 
-einline void inst_pul (unsigned op, unsigned *sp, unsigned *osp,
+static einline void inst_pul (unsigned op, unsigned *sp, unsigned *osp,
 					   unsigned *cycles)
 {
 	if (op & 0x01) {
@@ -992,7 +997,7 @@ einline void inst_pul (unsigned op, unsigned *sp, unsigned *osp,
 	}
 }
 
-einline unsigned exgtfr_read (unsigned reg)
+static einline unsigned exgtfr_read (unsigned reg)
 {
 	unsigned data;
 
@@ -1036,7 +1041,7 @@ einline unsigned exgtfr_read (unsigned reg)
 	return data;
 }
 
-einline void exgtfr_write (unsigned reg, unsigned data)
+static einline void exgtfr_write (unsigned reg, unsigned data)
 {
 	switch (reg) {
 	case 0x0:
@@ -1077,7 +1082,7 @@ einline void exgtfr_write (unsigned reg, unsigned data)
 
 /* instruction: exg */
 
-einline void inst_exg (void)
+static einline void inst_exg (void)
 {
 	unsigned op, tmp;
 
@@ -1090,7 +1095,7 @@ einline void inst_exg (void)
 
 /* instruction: tfr */
 
-einline void inst_tfr (void)
+static einline void inst_tfr (void)
 {
 	unsigned op;
 
@@ -1098,6 +1103,19 @@ einline void inst_tfr (void)
 
 	exgtfr_write (op & 0xf, exgtfr_read (op >> 4));
 }
+
+#ifdef VECX_TRACE
+/* expose the full CPU register file to the differential tester. order:
+ * pc,a,b,x,y,u,s,dp,cc.
+ */
+void e6809_snap_regs (unsigned *r)
+{
+	r[0] = reg_pc & 0xffff; r[1] = reg_a & 0xff; r[2] = reg_b & 0xff;
+	r[3] = reg_x & 0xffff;  r[4] = reg_y & 0xffff;
+	r[5] = reg_u & 0xffff;  r[6] = reg_s & 0xffff;
+	r[7] = reg_dp & 0xff;   r[8] = reg_cc & 0xff;
+}
+#endif
 
 /* reset the 6809 */
 
@@ -1126,6 +1144,22 @@ unsigned e6809_sstep (unsigned irq_i, unsigned irq_f)
 	unsigned op;
 	unsigned cycles = 0;
 	unsigned ea, i0, i1, r;
+
+#ifdef VECX_TRACE
+	extern unsigned vecx_trace_pc, vecx_trace_pc_lo, vecx_trace_pc_hi;
+	extern unsigned long vecx_trace_icount;
+	vecx_trace_pc = reg_pc & 0xffff; /* PC at the start of this instruction */
+	if (vecx_trace_pc < vecx_trace_pc_lo) vecx_trace_pc_lo = vecx_trace_pc;
+	if (vecx_trace_pc > vecx_trace_pc_hi) vecx_trace_pc_hi = vecx_trace_pc;
+	vecx_trace_icount++;
+#endif
+
+#ifdef VECX_STEP_TRACE
+	{ extern void vecx_trace_step (unsigned pc, unsigned a, unsigned b,
+	                               unsigned x, unsigned u, unsigned dp);
+	  vecx_trace_step (reg_pc & 0xffff, reg_a & 0xff, reg_b & 0xff,
+	                   reg_x & 0xffff, reg_u & 0xffff, reg_dp & 0xff); }
+#endif
 
 	if (irq_f) {
 		if (get_cc (FLAG_F) == 0) {
@@ -1159,6 +1193,9 @@ unsigned e6809_sstep (unsigned irq_i, unsigned irq_f)
 			reg_pc = read16 (0xfff8);
 			irq_status = IRQ_NORMAL;
 			cycles += 7;
+#ifdef VECX_TRACE
+			vecx_trace_irq ();
+#endif
 		} else {
 			if (irq_status == IRQ_SYNC) {
 				irq_status = IRQ_NORMAL;
@@ -1169,6 +1206,20 @@ unsigned e6809_sstep (unsigned irq_i, unsigned irq_f)
 	if (irq_status != IRQ_NORMAL) {
 		return cycles + 1;
 	}
+
+#ifdef VECX_TRACE
+	{
+		extern unsigned vecx_diff_insn_pc, vecx_diff_pre;
+		extern void vecx_diff_prestep (void);
+		vecx_diff_insn_pc = reg_pc & 0xffff; /* PC of the instruction opcode */
+		vecx_diff_pre = cycles;              /* cycles charged before it (irq entry) */
+		/* run the reference core over this one instruction from the current
+		 * (post-interrupt-entry, pre-instruction) state, on a rolled-back
+		 * snapshot of memory. no-op unless the diff driver is linked in.
+		 */
+		vecx_diff_prestep ();
+	}
+#endif
 
 	op = pc_read8 ();
 
@@ -2617,6 +2668,14 @@ unsigned e6809_sstep (unsigned irq_i, unsigned irq_f)
 		printf ("unknown page-0 op code: %.2x\n", op);
 		break;
 	}
+
+#ifdef VECX_TRACE
+	{
+		extern unsigned vecx_diff_insn_pc, vecx_diff_pre;
+		extern void vecx_diff_check (unsigned pc, unsigned insn_cycles);
+		vecx_diff_check (vecx_diff_insn_pc, cycles - vecx_diff_pre);
+	}
+#endif
 
 	return cycles;
 }

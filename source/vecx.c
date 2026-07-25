@@ -2,12 +2,44 @@
 #include "e6809.h"
 #include "vecx.h"
 #include "osint.h"
+#include "psg.h"
 
 #define einline __inline
+
+#ifdef VECX_TRACE
+/* host-side diagnostics hooks (native reproduction harness only). the Wii
+ * build never defines VECX_TRACE, so its object code is unchanged.
+ */
+void vecx_trace_psg_latch (unsigned val);
+void vecx_trace_psg_data (unsigned reg, unsigned val);
+unsigned long vecx_trace_cycles = 0; /* absolute 6809 cycle count */
+unsigned char vecx_peek8 (unsigned address); /* defined after ram[] below */
+#endif
 
 unsigned char rom[8192];
 unsigned char cart[32768];
 static unsigned char ram[1024];
+
+#ifdef VECX_TRACE
+/* side-effect-free memory read for the differential tester: reads code bytes
+ * (rom/cart/ram) without touching VIA/io registers. only valid for fetching
+ * instruction bytes, which never live in the io page.
+ */
+unsigned char vecx_peek8 (unsigned address)
+{
+	address &= 0xffff;
+	if ((address & 0xe000) == 0xe000)
+		return rom[address & 0x1fff];
+	if ((address & 0xe000) == 0xc000) {
+		if (address & 0x800)
+			return ram[address & 0x3ff];
+		return 0xff; /* io page: no peeking */
+	}
+	if (address < 0x8000)
+		return cart[address];
+	return 0xff;
+}
+#endif
 
 /* the sound chip registers */
 
@@ -69,8 +101,8 @@ enum {
 	FCYCLES_INIT    = VECTREX_MHZ / VECTREX_PDECAY,
 
 	/* max number of possible vectors that maybe on the screen at one time.
-	 * one only needs VECTREX_MHZ / VECTREX_PDECAY but we need to also store
-	 * deleted vectors in a single table
+	 * only VECTREX_MHZ / VECTREX_PDECAY are strictly needed, but deleted
+	 * vectors must also be stored in a single table
 	 */
 	
 	VECTOR_CNT		= VECTREX_MHZ / VECTREX_PDECAY,
@@ -78,7 +110,7 @@ enum {
 	VECTOR_HASH     = 65521
 };
 
-static unsigned alg_vectoring; /* are we drawing a vector right now? */
+static unsigned alg_vectoring; /* is a vector being drawn right now? */
 static long alg_vector_x0;
 static long alg_vector_y0;
 static long alg_vector_x1;
@@ -97,6 +129,71 @@ static long vector_hash[VECTOR_HASH];
 
 static long fcycles;
 
+#ifdef VECX_TRACE
+/* full snapshot / restore of everything read8/write8 (and their helpers) can
+ * mutate, so the differential tester can run the reference core over one
+ * instruction and then roll the machine back before the core runs it for
+ * real. rom/cart are read-only; the alg_vector state and fcycles are only
+ * touched by the VIA/analog stepping (not by read8/write8), so they are
+ * not included here.
+ */
+#include <string.h>
+static struct {
+	unsigned char ram[1024];
+	unsigned snd_regs[16], snd_select;
+	unsigned via_ora, via_orb, via_ddra, via_ddrb;
+	unsigned via_t1on, via_t1int, via_t1c, via_t1ll, via_t1lh, via_t1pb7;
+	unsigned via_t2on, via_t2int, via_t2c, via_t2ll;
+	unsigned via_sr, via_srb, via_src, via_srclk;
+	unsigned via_acr, via_pcr, via_ifr, via_ier;
+	unsigned via_ca2, via_cb2h, via_cb2s;
+	unsigned alg_rsh, alg_xsh, alg_ysh, alg_zsh, alg_jsh, alg_compare;
+	long alg_dx, alg_dy;
+} dsav;
+
+void vecx_snapshot (void)
+{
+	memcpy (dsav.ram, ram, sizeof ram);
+	memcpy (dsav.snd_regs, snd_regs, sizeof snd_regs);
+	dsav.snd_select = snd_select;
+	dsav.via_ora = via_ora; dsav.via_orb = via_orb;
+	dsav.via_ddra = via_ddra; dsav.via_ddrb = via_ddrb;
+	dsav.via_t1on = via_t1on; dsav.via_t1int = via_t1int; dsav.via_t1c = via_t1c;
+	dsav.via_t1ll = via_t1ll; dsav.via_t1lh = via_t1lh; dsav.via_t1pb7 = via_t1pb7;
+	dsav.via_t2on = via_t2on; dsav.via_t2int = via_t2int; dsav.via_t2c = via_t2c;
+	dsav.via_t2ll = via_t2ll;
+	dsav.via_sr = via_sr; dsav.via_srb = via_srb; dsav.via_src = via_src;
+	dsav.via_srclk = via_srclk;
+	dsav.via_acr = via_acr; dsav.via_pcr = via_pcr; dsav.via_ifr = via_ifr;
+	dsav.via_ier = via_ier;
+	dsav.via_ca2 = via_ca2; dsav.via_cb2h = via_cb2h; dsav.via_cb2s = via_cb2s;
+	dsav.alg_rsh = alg_rsh; dsav.alg_xsh = alg_xsh; dsav.alg_ysh = alg_ysh;
+	dsav.alg_zsh = alg_zsh; dsav.alg_jsh = alg_jsh; dsav.alg_compare = alg_compare;
+	dsav.alg_dx = alg_dx; dsav.alg_dy = alg_dy;
+}
+
+void vecx_restore (void)
+{
+	memcpy (ram, dsav.ram, sizeof ram);
+	memcpy (snd_regs, dsav.snd_regs, sizeof snd_regs);
+	snd_select = dsav.snd_select;
+	via_ora = dsav.via_ora; via_orb = dsav.via_orb;
+	via_ddra = dsav.via_ddra; via_ddrb = dsav.via_ddrb;
+	via_t1on = dsav.via_t1on; via_t1int = dsav.via_t1int; via_t1c = dsav.via_t1c;
+	via_t1ll = dsav.via_t1ll; via_t1lh = dsav.via_t1lh; via_t1pb7 = dsav.via_t1pb7;
+	via_t2on = dsav.via_t2on; via_t2int = dsav.via_t2int; via_t2c = dsav.via_t2c;
+	via_t2ll = dsav.via_t2ll;
+	via_sr = dsav.via_sr; via_srb = dsav.via_srb; via_src = dsav.via_src;
+	via_srclk = dsav.via_srclk;
+	via_acr = dsav.via_acr; via_pcr = dsav.via_pcr; via_ifr = dsav.via_ifr;
+	via_ier = dsav.via_ier;
+	via_ca2 = dsav.via_ca2; via_cb2h = dsav.via_cb2h; via_cb2s = dsav.via_cb2s;
+	alg_rsh = dsav.alg_rsh; alg_xsh = dsav.alg_xsh; alg_ysh = dsav.alg_ysh;
+	alg_zsh = dsav.alg_zsh; alg_jsh = dsav.alg_jsh; alg_compare = dsav.alg_compare;
+	alg_dx = dsav.alg_dx; alg_dy = dsav.alg_dy;
+}
+#endif
+
 /* update the snd chips internal registers when via_ora/via_orb changes */
 
 static einline void snd_update (void)
@@ -113,14 +210,29 @@ static einline void snd_update (void)
 
 		if (snd_select != 14) {
 			snd_regs[snd_select] = via_ora;
+
+#ifdef VECX_TRACE
+			vecx_trace_psg_data (snd_select, via_ora);
+#endif
+
+			if (snd_select == 13) {
+				/* a write to the envelope shape register always
+				 * restarts the envelope generator.
+				 */
+				psg_env_restart ();
+			}
 		}
 
 		break;
 	case 0x18:
 		/* the sound chip is latching an address */
-		
+
 		if ((via_ora & 0xf0) == 0x00) {
 			snd_select = via_ora & 0x0f;
+
+#ifdef VECX_TRACE
+			vecx_trace_psg_latch (via_ora & 0x0f);
+#endif
 		}
 
 		break;
@@ -199,7 +311,7 @@ static einline void int_update (void)
 
 unsigned char read8 (unsigned address)
 {
-	unsigned char data;
+	unsigned char data = 0xff; /* unhandled reads float high, as on real hardware */
 
 	if ((address & 0xe000) == 0xe000) {
 		/* rom */
@@ -213,6 +325,9 @@ unsigned char read8 (unsigned address)
 		} else if (address & 0x1000) {
 			/* io */
 
+#ifdef VECX_TRACE
+			{ extern void vecx_trace_ioread (unsigned reg); vecx_trace_ioread (address & 0xf); }
+#endif
 			switch (address & 0xf) {
 			case 0x0:
 				/* compare signal is an input so the value does not come from
@@ -352,9 +467,17 @@ void write8 (unsigned address, unsigned char data)
 
 		if (address & 0x800) {
 			ram[address & 0x3ff] = data;
+#ifdef VECX_TRACE
+			{ extern void vecx_trace_ramwrite (unsigned addr, unsigned char d);
+			  vecx_trace_ramwrite (address & 0xffff, data); }
+#endif
 		}
 
 		if (address & 0x1000) {
+#ifdef VECX_TRACE
+			{ extern void vecx_trace_iowrite (unsigned reg, unsigned char d);
+			  vecx_trace_iowrite (address & 0xf, data); }
+#endif
 			switch (address & 0xf) {
 			case 0x0:
 				via_orb = data;
@@ -538,6 +661,8 @@ void vecx_reset (void)
 	snd_regs[14] = 0xff;
 
 	snd_select = 0;
+
+	psg_reset ();
 
 	via_ora = 0;
 	via_orb = 0;
@@ -858,11 +983,11 @@ static einline void alg_sstep (void)
 			alg_vector_color = (unsigned char) alg_zsh;
 		}
 	} else {
-		/* already drawing a vector ... check if we need to turn it off */
+		/* already drawing a vector ... check whether it needs turning off */
 
 		if (sig_blank == 0) {
-			/* blank just went on, vectoring turns off, and we've got a
-			 * new line.
+			/* blank just went on, vectoring turns off, and a new line is
+			 * complete.
 			 */
 
 			alg_vectoring = 0;
@@ -882,7 +1007,7 @@ static einline void alg_sstep (void)
 						 alg_vector_x1, alg_vector_y1,
 						 alg_vector_color);
 
-			/* we continue vectoring with a new set of parameters if the
+			/* vectoring continues with a new set of parameters if the
 			 * current point is not out of limits.
 			 */
 
@@ -908,7 +1033,7 @@ static einline void alg_sstep (void)
 		alg_curr_x >= 0 && alg_curr_x < ALG_MAX_X &&
 		alg_curr_y >= 0 && alg_curr_y < ALG_MAX_Y) {
 
-		/* we're vectoring ... current point is still within limits so
+		/* vectoring is active ... current point is still within limits so
 		 * extend the current vector.
 		 */
 
@@ -916,6 +1041,42 @@ static einline void alg_sstep (void)
 		alg_vector_y1 = alg_curr_y;
 	}
 }
+
+#ifdef VECX_TRACE
+/* Exposed for the reference-CPU differential harness: step the peripherals
+ * (VIA + analog + PSG + frame render) for icycles, exactly as vecx_emu does
+ * after each instruction. Lets an external CPU core (mc6809) drive the real
+ * vecx machine to check whether the Minestorm drone still occurs with an
+ * independent CPU -- isolating CPU-semantics/undefined-flag causes from VIA.
+ */
+void vecx_step_peripherals (unsigned icycles)
+{
+	unsigned c;
+
+	for (c = 0; c < icycles; c++) {
+		via_sstep0 ();
+		alg_sstep ();
+		via_sstep1 ();
+	}
+
+	psg_run (icycles);
+
+	fcycles -= (long) icycles;
+
+	if (fcycles < 0) {
+		vector_t *tmp;
+		fcycles += FCYCLES_INIT;
+		osint_render ();
+		vector_erse_cnt = vector_draw_cnt;
+		vector_draw_cnt = 0;
+		tmp = vectors_erse;
+		vectors_erse = vectors_draw;
+		vectors_draw = tmp;
+	}
+}
+
+unsigned vecx_read_ifr (void) { return via_ifr; }
+#endif
 
 void vecx_emu (long cycles, int ahead)
 {
@@ -930,6 +1091,12 @@ void vecx_emu (long cycles, int ahead)
 			via_sstep1 ();
 		}
 
+		psg_run (icycles);
+
+#ifdef VECX_TRACE
+		vecx_trace_cycles += icycles;
+#endif
+
 		cycles -= (long) icycles;
 
 		fcycles -= (long) icycles;
@@ -940,7 +1107,7 @@ void vecx_emu (long cycles, int ahead)
 			fcycles += FCYCLES_INIT;
 			osint_render ();
 
-			/* everything that was drawn during this pass now now enters
+			/* everything that was drawn during this pass now enters
 			 * the erase list for the next pass.
 			 */
 

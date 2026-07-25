@@ -1,20 +1,11 @@
 /************************************************************************
  * Pseudo bluring functions.
- * 
+ *
  * These functions draw a close enough approach of the output
  * that blurring a texture would produce on a specific line/point.
  ***********************************************************************/
 
 #include <grrlib.h>
-
-typedef struct wii_vector_type {
-	u16 x0, y0; /* computed start coordinate (on wiis resolution)*/
-	u16 x1, y1; /* computed end coordinate (on wiis resolution)*/
-} wii_vector_t;
-
-extern wii_vector_t *vectors_pers[20];
-extern u8 persFull, persCycle;
-extern long vector_pers_cnt[20];
 
 void blurDot(u16 x, u16 y, u16 factor, u16 lightf, u32 col)
 {
