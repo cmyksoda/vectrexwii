@@ -39,12 +39,6 @@
 #include "official_17_png.h"
 #include "official_18_vec.h"
 #include "official_18_png.h"
-#include "official_19_vec.h"
-#include "official_19_png.h"
-#include "official_20_vec.h"
-#include "official_20_png.h"
-#include "official_21_vec.h"
-#include "official_21_png.h"
 #include "mods_00_vec.h"
 #include "mods_00_png.h"
 #include "mods_01_vec.h"
@@ -59,14 +53,6 @@
 #include "mods_05_png.h"
 #include "mods_06_vec.h"
 #include "mods_06_png.h"
-#include "mods_07_vec.h"
-#include "mods_07_png.h"
-#include "mods_08_vec.h"
-#include "mods_08_png.h"
-#include "mods_09_vec.h"
-#include "mods_09_png.h"
-#include "mods_10_vec.h"
-#include "mods_10_png.h"
 #include "proto_00_vec.h"
 #include "proto_00_png.h"
 #include "proto_01_vec.h"
@@ -126,43 +112,36 @@
 const CatalogEntry catalog_official[] = {
 	{ "Armor Attack", official_00_vec, official_00_vec_size, official_00_png },
 	{ "Bedlam", official_01_vec, official_01_vec_size, official_01_png },
-	{ "Berzerk", official_02_vec, official_02_vec_size, official_02_png },
-	{ "Blitz! - Action Football", official_03_vec, official_03_vec_size, official_03_png },
-	{ "Clean Sweep", official_04_vec, official_04_vec_size, official_04_png },
-	{ "Cosmic Chasm", official_05_vec, official_05_vec_size, official_05_png },
-	{ "Fortress of Narzod", official_06_vec, official_06_vec_size, official_06_png },
-	{ "Heads Up - Action Soccer", official_07_vec, official_07_vec_size, official_07_png },
-	{ "Hyperchase", official_08_vec, official_08_vec_size, official_08_png },
-	{ "Mine Storm II", official_09_vec, official_09_vec_size, official_09_png },
-	{ "Polar Rescue", official_10_vec, official_10_vec_size, official_10_png },
-	{ "Pole Position", official_11_vec, official_11_vec_size, official_11_png },
-	{ "Rip-Off", official_12_vec, official_12_vec_size, official_12_png },
-	{ "Scramble", official_13_vec, official_13_vec_size, official_13_png },
-	{ "Solar Quest", official_14_vec, official_14_vec_size, official_14_png },
-	{ "Space Wars", official_15_vec, official_15_vec_size, official_15_png },
-	{ "Spike", official_16_vec, official_16_vec_size, official_16_png },
-	{ "Spinball", official_17_vec, official_17_vec_size, official_17_png },
-	{ "Star Castle", official_18_vec, official_18_vec_size, official_18_png },
-	{ "Star Hawk", official_19_vec, official_19_vec_size, official_19_png },
-	{ "Star Trek - The Motion Picture", official_20_vec, official_20_vec_size, official_20_png },
-	{ "Web Wars", official_21_vec, official_21_vec_size, official_21_png },
+	{ "Blitz! - Action Football", official_02_vec, official_02_vec_size, official_02_png },
+	{ "Clean Sweep", official_03_vec, official_03_vec_size, official_03_png },
+	{ "Cosmic Chasm", official_04_vec, official_04_vec_size, official_04_png },
+	{ "Fortress of Narzod", official_05_vec, official_05_vec_size, official_05_png },
+	{ "Heads Up - Action Soccer", official_06_vec, official_06_vec_size, official_06_png },
+	{ "Hyperchase", official_07_vec, official_07_vec_size, official_07_png },
+	{ "Mine Storm II", official_08_vec, official_08_vec_size, official_08_png },
+	{ "Polar Rescue", official_09_vec, official_09_vec_size, official_09_png },
+	{ "Rip-Off", official_10_vec, official_10_vec_size, official_10_png },
+	{ "Scramble", official_11_vec, official_11_vec_size, official_11_png },
+	{ "Solar Quest", official_12_vec, official_12_vec_size, official_12_png },
+	{ "Space Wars", official_13_vec, official_13_vec_size, official_13_png },
+	{ "Spike", official_14_vec, official_14_vec_size, official_14_png },
+	{ "Spinball", official_15_vec, official_15_vec_size, official_15_png },
+	{ "Star Castle", official_16_vec, official_16_vec_size, official_16_png },
+	{ "Star Hawk", official_17_vec, official_17_vec_size, official_17_png },
+	{ "Web Wars", official_18_vec, official_18_vec_size, official_18_png },
 };
-const int catalog_official_count = 22;
+const int catalog_official_count = 19;
 
 const CatalogEntry catalog_mods[] = {
-	{ "Berzerk (Bugfixed Prototype)", mods_00_vec, mods_00_vec_size, mods_00_png },
-	{ "Clean Sweep (Mr Boston)", mods_01_vec, mods_01_vec_size, mods_01_png },
-	{ "Dark Tower [h1]", mods_02_vec, mods_02_vec_size, mods_02_png },
-	{ "Mine Storm (Karrsoft) [h1]", mods_03_vec, mods_03_vec_size, mods_03_png },
-	{ "Mine Storm (RLB) [h1]", mods_04_vec, mods_04_vec_size, mods_04_png },
-	{ "Mine Storm II [h1]", mods_05_vec, mods_05_vec_size, mods_05_png },
-	{ "Narrow Escape 2-D [h1]", mods_06_vec, mods_06_vec_size, mods_06_png },
-	{ "Polar Rescue [a1]", mods_07_vec, mods_07_vec_size, mods_07_png },
-	{ "Pole Position [f1]", mods_08_vec, mods_08_vec_size, mods_08_png },
-	{ "Star Trek (controller hack) [h1]", mods_09_vec, mods_09_vec_size, mods_09_png },
-	{ "Star Trek - The Motion Picture [a1]", mods_10_vec, mods_10_vec_size, mods_10_png },
+	{ "Clean Sweep (Mr Boston)", mods_00_vec, mods_00_vec_size, mods_00_png },
+	{ "Dark Tower [h1]", mods_01_vec, mods_01_vec_size, mods_01_png },
+	{ "Mine Storm (Karrsoft) [h1]", mods_02_vec, mods_02_vec_size, mods_02_png },
+	{ "Mine Storm (RLB) [h1]", mods_03_vec, mods_03_vec_size, mods_03_png },
+	{ "Mine Storm II [h1]", mods_04_vec, mods_04_vec_size, mods_04_png },
+	{ "Narrow Escape 2-D [h1]", mods_05_vec, mods_05_vec_size, mods_05_png },
+	{ "Polar Rescue [a1]", mods_06_vec, mods_06_vec_size, mods_06_png },
 };
-const int catalog_mods_count = 11;
+const int catalog_mods_count = 7;
 
 const CatalogEntry catalog_prototypes[] = {
 	{ "Dark Tower", proto_00_vec, proto_00_vec_size, proto_00_png },
