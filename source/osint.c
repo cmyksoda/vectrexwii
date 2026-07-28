@@ -306,27 +306,31 @@ else c = (vectors_draw[0].color * 256 / VECTREX_COLORS*0x1010100)+0xFF;
 			for(i = 1; i <= optPersistence[1]; i++){
 			j = (persCycle >= i ? persCycle - i : PERSFRAMES - i + persCycle + 1);
 				for(v = 0; v < vector_pers_cnt[j]; v++){
-					GRRLIB_Plot(vectors_pers[j][v].x0, vectors_pers[j][v].y0, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], optPersistence[3]));
-					GRRLIB_Line(vectors_pers[j][v].x0, vectors_pers[j][v].y0, vectors_pers[j][v].x1, vectors_pers[j][v].y1, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], optPersistence[3]));
+					vbatch_point(vectors_pers[j][v].x0, vectors_pers[j][v].y0, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], optPersistence[3]));
+					vbatch_line(vectors_pers[j][v].x0, vectors_pers[j][v].y0, vectors_pers[j][v].x1, vectors_pers[j][v].y1, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], optPersistence[3]));
 				}
 			}
+		vbatch_flush(); //must land under the persistence pass's blend mode before it changes below
 
 		//Blurred vectors to give a glowing effect
 		if(optGlow[0]){
+			u32 glowc = (c & 0xFFFFFF00) | optGlow[2]; //same colour as the vectors, glow-opacity alpha instead of opaque
 			GRRLIB_SetBlend(GRRLIB_BLEND_ADD);
 			for(v = 0; v < vector_draw_cnt; v++){
-				blurDot(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0, optGlow[1]/7 + 2, optGlow[1], c);
-				blurDot(vectors_pers[persCycle][v].x1, vectors_pers[persCycle][v].y1, optGlow[1]/7 + 2, optGlow[1], c);
-				blurLine(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0, vectors_pers[persCycle][v].x1, vectors_pers[persCycle][v].y1, optGlow[1], c);
+				blurDot(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0, optGlow[1]/7 + 2, optGlow[1], glowc);
+				blurDot(vectors_pers[persCycle][v].x1, vectors_pers[persCycle][v].y1, optGlow[1]/7 + 2, optGlow[1], glowc);
+				blurLine(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0, vectors_pers[persCycle][v].x1, vectors_pers[persCycle][v].y1, optGlow[1], glowc);
 			}
+			vbatch_flush(); //must land under GRRLIB_BLEND_ADD before it's switched back below
 			GRRLIB_SetBlend(GRRLIB_BLEND_ALPHA);
 		}
 
 		//Draw the current vectors normally
 		for(v = 0; v < vector_draw_cnt; v++){
-			GRRLIB_Plot(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0, c);
-			GRRLIB_Line(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0, vectors_pers[persCycle][v].x1, vectors_pers[persCycle][v].y1, c);
+			vbatch_point(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0, c);
+			vbatch_line(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0, vectors_pers[persCycle][v].x1, vectors_pers[persCycle][v].y1, c);
 		}
+		vbatch_flush();
 
 		if (++persCycle > PERSFRAMES) {persCycle = 0; persFull = 1;} //wrap around and set the flag to start freeing old data
 
@@ -351,25 +355,29 @@ f32 s = optScreenSize / 255.0f;
 			for(i = 2; i <= optPersistence[1] + 1; i++){
 			j = (persCycle >= i ? persCycle - i : PERSFRAMES - i + persCycle + 1);
 				for(v = 0; v < vector_pers_cnt[j]; v++){
-					GRRLIB_Plot(vectors_pers[j][v].x0, vectors_pers[j][v].y0, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], optPersistence[3]));
-					GRRLIB_Line(vectors_pers[j][v].x0, vectors_pers[j][v].y0, vectors_pers[j][v].x1, vectors_pers[j][v].y1, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], optPersistence[3]));
+					vbatch_point(vectors_pers[j][v].x0, vectors_pers[j][v].y0, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], optPersistence[3]));
+					vbatch_line(vectors_pers[j][v].x0, vectors_pers[j][v].y0, vectors_pers[j][v].x1, vectors_pers[j][v].y1, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], optPersistence[3]));
 				}
 			}
+		vbatch_flush(); //must land under the persistence pass's blend mode before it changes below
 
 		if(optGlow[0]){
+			u32 glowc = (c & 0xFFFFFF00) | optGlow[2]; //same colour as the vectors, glow-opacity alpha instead of opaque
 			GRRLIB_SetBlend(GRRLIB_BLEND_ADD);
 			for(v = 0; v < vector_erse_cnt; v++){
-				blurDot(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s), optGlow[1]/7 + 2, optGlow[1], c);
-				blurDot(SCALE_X(offx + vectors_erse[v].x1 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y1 / scl_factor, s), optGlow[1]/7 + 2, optGlow[1], c);
-				blurLine(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s), SCALE_X(offx + vectors_erse[v].x1 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y1 / scl_factor, s), optGlow[1], c);
+				blurDot(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s), optGlow[1]/7 + 2, optGlow[1], glowc);
+				blurDot(SCALE_X(offx + vectors_erse[v].x1 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y1 / scl_factor, s), optGlow[1]/7 + 2, optGlow[1], glowc);
+				blurLine(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s), SCALE_X(offx + vectors_erse[v].x1 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y1 / scl_factor, s), optGlow[1], glowc);
 			}
+			vbatch_flush(); //must land under GRRLIB_BLEND_ADD before it's switched back below
 			GRRLIB_SetBlend(GRRLIB_BLEND_ALPHA);
 		}
 
 		for(v = 0; v < vector_erse_cnt; v++){
-			GRRLIB_Plot(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s), c);
-			GRRLIB_Line(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s), SCALE_X(offx + vectors_erse[v].x1 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y1 / scl_factor, s), c);
+			vbatch_point(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s), c);
+			vbatch_line(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s), SCALE_X(offx + vectors_erse[v].x1 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y1 / scl_factor, s), c);
 		}
+		vbatch_flush();
 
 
 		if(overlay != NULL && optOverlay[0]) GRRLIB_DrawImg(SCR_CX + (OVL_X - SCR_CX) * s, SCR_CY + (OVL_Y - SCR_CY) * s, overlay, 0, s, s, 0xFFFFFF00+optOverlay[1]);
@@ -944,7 +952,7 @@ void PauseMenu()
 			//Process input
 				if(input == 3) optOverlay[1] -= (optOverlay[1] == 0 ? 0 : 15);
 				if(input == 4) optOverlay[1] += (optOverlay[1] == 255 ? 0 : 15);
-				if(input == 5 || input == 6) pauseMenu[0] = 0;
+				if(input == 5 || input == 6) {pauseMenu[1] = pauseMenu[0] + 1; pauseMenu[0] = 0;} //cursor lands back on this setting's own row
 			
 			//Draw
 				PrintCenteredTTF(155, "Overlay", FONTHEAD, 0x228B22FF);
@@ -959,7 +967,7 @@ void PauseMenu()
 				
 				if(input == 3) optVtxCustomColor[pauseMenu[1]] -= (optVtxCustomColor[pauseMenu[1]] == 0 ? 0 : 15);
 				if(input == 4) optVtxCustomColor[pauseMenu[1]] += (optVtxCustomColor[pauseMenu[1]] == 255 ? 0 : 15);
-				if(input == 5 || input == 6) {pauseMenu[0] = 0; pauseMenu[1] = 1;}
+				if(input == 5 || input == 6) {pauseMenu[1] = pauseMenu[0] + 1; pauseMenu[0] = 0;} //cursor lands back on this setting's own row
 			
 			//Draw
 				PrintCenteredTTF(155, "Custom Color", FONTHEAD, 0x228B22FF);
@@ -976,26 +984,47 @@ void PauseMenu()
 				else GRRLIB_PrintfTTF((rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2-MenuOffsets[4], 260, myFont,">", (FONTHEAD+FONTOPT)/2,0x0000FFFF);
 			break;
 			case 4: //Glow
-			//input
-				if(input == 5 || input == 6) pauseMenu[0] = 0;
-				if(input == 3) optGlow[1]--; if(input == 4) optGlow[1]++;
-				if(optGlow[1] < 1) optGlow[1] = 35; if(optGlow[1] > 35) optGlow[1] = 1;
-			//draw
-				PrintCenteredTTF(155, "Glow factor", FONTHEAD, 0x228B22FF);
+			//Process input
+				if(input == 1) pauseMenu[1]--;	if(input == 2) pauseMenu[1]++;
+				if(pauseMenu[1] < 1) pauseMenu[1] = 2; if(pauseMenu[1] > 2) pauseMenu[1] = 1;
+
+				if(input == 5 || input == 6) {pauseMenu[1] = pauseMenu[0] + 1; pauseMenu[0] = 0;} //cursor lands back on this setting's own row
+
+				if(input == 3)
+					switch(pauseMenu[1])
+					{
+						case 1: optGlow[1] -= (optGlow[1] == 1 ? 0 : 1); break;
+						case 2: optGlow[2] -= (optGlow[2] == 0 ? 0 : 15); break;
+					}
+				if(input == 4)
+					switch(pauseMenu[1])
+					{
+						case 1: optGlow[1] += (optGlow[1] == 35 ? 0 : 1); break;
+						case 2: optGlow[2] += (optGlow[2] == 255 ? 0 : 15); break;
+					}
+
+			//Draw
+				PrintCenteredTTF(155, "Glow", FONTHEAD, 0x228B22FF);
+				GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont,"Factor 15", FONTOPT))/2, 200, myFont,"Factor", FONTOPT, 0xFFFFFFFF);
 				{
 					char factor[8];
 					sprintf(factor, "%d", optGlow[1]);
-					if(optGlow[1]<10) GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "0", FONTOPT))/2, 225, myFont, factor, FONTOPT, 0xFF0000FF);
-					else GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "20", FONTOPT))/2, 225, myFont, factor, FONTOPT, 0xFF0000FF);
+					GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont,"Factor 15", FONTOPT))/2 + GRRLIB_WidthTTF(myFont,"Factor ", FONTOPT), 200, myFont, factor, FONTOPT, 0xFF0000FF);
 				}
-				
+
+				drawSliderCaption(227, "Opacity", optGlow[2]);
+				GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2, 247, myFont, "[                  ]", FONTOPT, 0xFFFFFFFF);
+				GRRLIB_Rectangle( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2 + GRRLIB_WidthTTF(myFont, "[", FONTOPT) , 260, (GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6) * optGlow[2] / 255 , 7, 0xFFFFFFFF, 1);
+
+				if(pauseMenu[1] == 2) GRRLIB_PrintfTTF((rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2-MenuOffsets[4], 247, myFont,">", (FONTHEAD+FONTOPT)/2,0xADFF2FFF);
+				else GRRLIB_PrintfTTF((rmode->fbWidth-GRRLIB_WidthTTF(myFont,"Factor 15", FONTOPT))/2-MenuOffsets[4], 200, myFont,">", (FONTHEAD+FONTOPT)/2,0xADFF2FFF);
 			break;
 			case 5: //Persistence
 			//Process input
 				if(input == 1) pauseMenu[1]--;	if(input == 2) pauseMenu[1]++;
 				if(pauseMenu[1] < 1) pauseMenu[1] = 3; if(pauseMenu[1] > 3) pauseMenu[1] = 1;
 				
-				if(input == 5 || input == 6){ pauseMenu[0] = 0; pauseMenu[1] = 1;}
+				if(input == 5 || input == 6){ pauseMenu[1] = pauseMenu[0] + 1; pauseMenu[0] = 0;} //cursor lands back on this setting's own row
 				if(input == 3)
 					switch(pauseMenu[1])
 					{
@@ -1036,7 +1065,7 @@ void PauseMenu()
 			//Process input
 				if(input == 3) optScreenSize -= (optScreenSize <= 150 ? 0 : 15);
 				if(input == 4) optScreenSize += (optScreenSize >= 255 ? 0 : 15);
-				if(input == 5 || input == 6) pauseMenu[0] = 0;
+				if(input == 5 || input == 6) {pauseMenu[1] = pauseMenu[0] + 1; pauseMenu[0] = 0;} //cursor lands back on this setting's own row
 
 			//Draw
 				PrintCenteredTTF(155, "Screen Size", FONTHEAD, 0x228B22FF);
@@ -1218,7 +1247,7 @@ int main(int argc, char *argv[]){
 	offy = (480 - ALG_MAX_Y / scl_factor) / 2;
 	
 	//Load splashscreen, font and Minestorm
-	splash = GRRLIB_LoadTexture(splashscreen_png);	
+	splash = GRRLIB_LoadTexture(splashscreen_png);
 	myFont = GRRLIB_LoadTTF(Font_ttf, Font_ttf_size);
 	memcpy (rom, rom_dat, sizeof(rom));	 //Preloaded/Default ROM [Minestorm]	
 	

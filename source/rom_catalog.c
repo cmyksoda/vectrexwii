@@ -39,6 +39,8 @@
 #include "official_17_png.h"
 #include "official_18_vec.h"
 #include "official_18_png.h"
+#include "official_19_vec.h"
+#include "official_19_png.h"
 #include "mods_00_vec.h"
 #include "mods_00_png.h"
 #include "mods_01_vec.h"
@@ -57,6 +59,8 @@
 #include "proto_00_png.h"
 #include "proto_01_vec.h"
 #include "proto_01_png.h"
+#include "proto_02_vec.h"
+#include "proto_02_png.h"
 #include "demos_00_vec.h"
 #include "demos_01_vec.h"
 #include "demos_02_vec.h"
@@ -128,9 +132,10 @@ const CatalogEntry catalog_official[] = {
 	{ "Spinball", official_15_vec, official_15_vec_size, official_15_png },
 	{ "Star Castle", official_16_vec, official_16_vec_size, official_16_png },
 	{ "Star Hawk", official_17_vec, official_17_vec_size, official_17_png },
-	{ "Web Wars", official_18_vec, official_18_vec_size, official_18_png },
+	{ "Star Ship", official_18_vec, official_18_vec_size, official_18_png },
+	{ "Web Wars", official_19_vec, official_19_vec_size, official_19_png },
 };
-const int catalog_official_count = 19;
+const int catalog_official_count = 20;
 
 const CatalogEntry catalog_mods[] = {
 	{ "Clean Sweep (Mr Boston)", mods_00_vec, mods_00_vec_size, mods_00_png },
@@ -145,9 +150,10 @@ const int catalog_mods_count = 7;
 
 const CatalogEntry catalog_prototypes[] = {
 	{ "Dark Tower", proto_00_vec, proto_00_vec_size, proto_00_png },
-	{ "Tour De France", proto_01_vec, proto_01_vec_size, proto_01_png },
+	{ "Pitcher's Duel", proto_01_vec, proto_01_vec_size, proto_01_png },
+	{ "Tour De France", proto_02_vec, proto_02_vec_size, proto_02_png },
 };
-const int catalog_prototypes_count = 2;
+const int catalog_prototypes_count = 3;
 
 const CatalogEntry catalog_demos[] = {
 	{ "4-D Rotating Cube", demos_00_vec, demos_00_vec_size, NULL },
