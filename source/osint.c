@@ -33,13 +33,23 @@
 #define FONTROM 38
 
 /* Screen-size (overscan) scaling: shrink drawn geometry toward the screen
- * centre. s is optScreenSize/255 (1.0 = full). */
+ * centre. s is optScreenSize/255 (1.0 = full). SCALE_X also folds in
+ * aspectCorrection (see main()): on a console set to 16:9, the TV/Dolphin
+ * anamorphically stretches our 4:3-composed framebuffer, so the vector
+ * picture is pre-squeezed horizontally by 3/4 to come back out looking
+ * correct, with the freed-up margin left black (pillarboxed). Vertical
+ * scale is untouched -- only the horizontal axis is ever anamorphic. */
 #define SCR_CX 320.0f
 #define SCR_CY 240.0f
-#define SCALE_X(x, s) ((u16)(SCR_CX + ((f32)(x) - SCR_CX) * (s)))
+#define SCALE_X(x, s) ((u16)(SCR_CX + ((f32)(x) - SCR_CX) * (s) * aspectCorrection))
 #define SCALE_Y(y, s) ((u16)(SCR_CY + ((f32)(y) - SCR_CY) * (s)))
 
 u8 emustatus, joystick;
+
+/* Control schemes selectable from Settings > Joystick. GC/Wii are always
+ * offered; Nunchuk/Classic only appear in the cycle when WPAD_Probe(0, ...)
+ * reports that expansion actually plugged in (see joystickCycle()). */
+enum { JOY_GC = 0, JOY_WII, JOY_NUNCHUK, JOY_CLASSIC, JOY_MODE_COUNT };
 
 /* Set false to skip the (expensive) vector draw for one frame. The renderer
  * runs inside vecx_emu, so skipping it when the audio ring runs low keeps
@@ -51,6 +61,14 @@ static u8 renderThisFrame = 1;
  * sub-pages are identical, so this flag just swaps the backdrop and turns the
  * "Resume Game"/"Turn vectrex OFF" rows into a plain "Back". */
 static u8 settingsFromTitle;
+
+/* Non-zero while `joystick` should keep auto-tracking the best available
+ * scheme (see defaultJoystick()) instead of sitting at the player's last
+ * pick. Reset to 1 on every Menu() entry, cleared the moment the player
+ * manually cycles Joystick in Settings -- lets the title screen keep itself
+ * current even if an expansion is detected a beat late (WPAD_Probe() needs a
+ * moment after boot/unplug to settle). */
+static u8 joystickAutoOK = 1;
 
 GRRLIB_texImg *splash, *overlay;
 GRRLIB_ttfFont *myFont;
@@ -72,6 +90,10 @@ static GRRLIB_texImg *preview, *previewOvl;
 static long scl_factor;
 static long offx;
 static long offy;
+
+/* 1.0f normally; 0.75f (3:4) when the console's System Settings aspect
+ * ratio is 16:9, computed once in main(). See the SCALE_X comment above. */
+static f32 aspectCorrection = 1.0f;
 
 /* PSG samples accumulate in a ring and are pulled by ASND's per-voice
  * callback, which fires from the audio interrupt once per DSP DMA block.
@@ -336,8 +358,8 @@ else c = (vectors_draw[0].color * 256 / VECTREX_COLORS*0x1010100)+0xFF;
 
 		{
 			f32 s = optScreenSize / 255.0f;
-			if(overlay != NULL && optOverlay[0]) GRRLIB_DrawImg(SCR_CX + (OVL_X - SCR_CX) * s, SCR_CY + (OVL_Y - SCR_CY) * s, overlay, 0, s, s, 0xFFFFFF00+optOverlay[1]);
-			else GRRLIB_Rectangle(SCALE_X(offx, s), SCALE_Y(offy, s), 358.0f * s, 445.0f * s, c, 0);
+			if(overlay != NULL && optOverlay[0]) GRRLIB_DrawImg(SCR_CX + (OVL_X - SCR_CX) * s * aspectCorrection, SCR_CY + (OVL_Y - SCR_CY) * s, overlay, 0, s * aspectCorrection, s, 0xFFFFFF00+optOverlay[1]);
+			else GRRLIB_Rectangle(SCALE_X(offx, s), SCALE_Y(offy, s), 358.0f * s * aspectCorrection, 445.0f * s, c, 0);
 		}
 
 	GRRLIB_Render();
@@ -380,8 +402,8 @@ f32 s = optScreenSize / 255.0f;
 		vbatch_flush();
 
 
-		if(overlay != NULL && optOverlay[0]) GRRLIB_DrawImg(SCR_CX + (OVL_X - SCR_CX) * s, SCR_CY + (OVL_Y - SCR_CY) * s, overlay, 0, s, s, 0xFFFFFF00+optOverlay[1]);
-		else GRRLIB_Rectangle(SCALE_X(offx, s), SCALE_Y(offy, s), 358.0f * s, 445.0f * s, c, 0);
+		if(overlay != NULL && optOverlay[0]) GRRLIB_DrawImg(SCR_CX + (OVL_X - SCR_CX) * s * aspectCorrection, SCR_CY + (OVL_Y - SCR_CY) * s, overlay, 0, s * aspectCorrection, s, 0xFFFFFF00+optOverlay[1]);
+		else GRRLIB_Rectangle(SCALE_X(offx, s), SCALE_Y(offy, s), 358.0f * s * aspectCorrection, 445.0f * s, c, 0);
 }
 
 /* Backdrop for the options screen when it's opened from the title menu: there
@@ -392,7 +414,7 @@ f32 s = optScreenSize / 255.0f;
  * still, so they stay off here.) */
 static void preview_render(){
 f32 s = optScreenSize / 255.0f;
-f32 x = SCR_CX + (OVL_X - SCR_CX) * s, y = SCR_CY + (OVL_Y - SCR_CY) * s;
+f32 x = SCR_CX + (OVL_X - SCR_CX) * s * aspectCorrection, y = SCR_CY + (OVL_Y - SCR_CY) * s;
 u32 c;
 
 	//The still is white-on-black, so modulating it by the custom colour tints
@@ -400,8 +422,8 @@ u32 c;
 	if (optVtxCustomColor[0]) c = RGBA(optVtxCustomColor[1], optVtxCustomColor[2], optVtxCustomColor[3], 255);
 	else c = 0xFFFFFFFF;
 
-	if(preview != NULL) GRRLIB_DrawImg(x, y, preview, 0, s, s, c);
-	if(previewOvl != NULL && optOverlay[0]) GRRLIB_DrawImg(x, y, previewOvl, 0, s, s, 0xFFFFFF00+optOverlay[1]);
+	if(preview != NULL) GRRLIB_DrawImg(x, y, preview, 0, s * aspectCorrection, s, c);
+	if(previewOvl != NULL && optOverlay[0]) GRRLIB_DrawImg(x, y, previewOvl, 0, s * aspectCorrection, s, 0xFFFFFF00+optOverlay[1]);
 }
 
 static void previewLoad(){
@@ -502,32 +524,198 @@ static void drawSliderCaption(int y, const char *label, u8 value){
 	                 y, myFont, pct, FONTOPT, 0xADFF2FFF);
 }
 
+/* Maps a calibrated WPAD expansion analog axis (nunchuk stick, classic
+ * controller stick) to a Vectrex-style byte: 0x80 = centered, 0x00/0xff =
+ * full deflection. Scaled independently above/below center since the
+ * expansion's calibration range is rarely symmetric around it. */
+static u8 axisToByte(u8 pos, u8 center, u8 lo, u8 hi){
+	int diff, range, scaled;
+
+	/* Some expansion sources (Dolphin's emulated Classic Controller, at
+	 * least) never send a real calibration report and leave center/min/max
+	 * at 0. The plain range check below then collapses to 0 and this always
+	 * read back as dead-centre, silently dropping every input from that
+	 * stick no matter how far it's actually pushed. Falling back to the
+	 * Wii-standard symmetric centre/half-range keeps raw `pos` usable
+	 * instead of discarding it. */
+	if (center == 0 && lo == 0 && hi == 0) { center = 0x80; lo = 0x1E; hi = 0xE2; }
+
+	diff = (int)pos - (int)center;
+	range = diff >= 0 ? (int)hi - (int)center : (int)center - (int)lo;
+	if (range <= 0) return 0x80;
+	scaled = diff * 127 / range;
+	if (scaled > 127) scaled = 127;
+	if (scaled < -127) scaled = -127;
+	return (u8)(0x80 + scaled);
+}
+
+/* Steps `joystick` to the next/previous mode, skipping Nunchuk/Classic
+ * whenever that expansion isn't the one currently probed on WPAD channel 0,
+ * and skipping GC whenever no GameCube controller is plugged into channel 0.
+ * JOY_WII never gets skipped -- the Wiimote driving this very menu is by
+ * definition present -- so the loop always terminates. */
+static void joystickCycle(u32 expType, int gcConnected, int dir){
+	do {
+		joystick = (joystick + dir + JOY_MODE_COUNT) % JOY_MODE_COUNT;
+	} while ((joystick == JOY_NUNCHUK && expType != WPAD_EXP_NUNCHUK) ||
+	         (joystick == JOY_CLASSIC && expType != WPAD_EXP_CLASSIC) ||
+	         (joystick == JOY_GC && !gcConnected));
+}
+
+/* Synthesises Wiimote-D-pad-style "just pressed" bits from the Nunchuk/
+ * Classic Controller's (left) stick, for the menu screens that otherwise only
+ * read the Wiimote's own D-pad -- Nunchuk has no digital D-pad at all, and
+ * reading the stick as "held" would auto-repeat every poll instead of once
+ * per push, so this edge-detects it exactly like WPAD_ButtonsDown() does for
+ * real buttons. Returns bits OR-able straight into a WPAD_ButtonsDown()-
+ * shaped value (see the deadzone comment below for why x/y land crossed). */
+static u32 expansionMenuButtonsDown(){
+	static u8 wasUp, wasDown, wasLeft, wasRight;
+	expansion_t exp;
+	int x = 0, y = 0;
+	u8 isUp, isDown, isLeft, isRight;
+	u32 down = 0;
+
+	WPAD_Expansion(0, &exp);
+	if (exp.type == WPAD_EXP_NUNCHUK) {
+		x = (int)axisToByte(exp.nunchuk.js.pos.x, exp.nunchuk.js.center.x, exp.nunchuk.js.min.x, exp.nunchuk.js.max.x) - 0x80;
+		y = (int)axisToByte(exp.nunchuk.js.pos.y, exp.nunchuk.js.center.y, exp.nunchuk.js.min.y, exp.nunchuk.js.max.y) - 0x80;
+	} else if (exp.type == WPAD_EXP_CLASSIC) {
+		x = (int)axisToByte(exp.classic.ljs.pos.x, exp.classic.ljs.center.x, exp.classic.ljs.min.x, exp.classic.ljs.max.x) - 0x80;
+		y = (int)axisToByte(exp.classic.ljs.pos.y, exp.classic.ljs.center.y, exp.classic.ljs.min.y, exp.classic.ljs.max.y) - 0x80;
+	}
+
+	/* The menu's WPAD_BUTTON_UP/DOWN/LEFT/RIGHT wiring (Menu()'s "Browse
+	 * ROMs"/"Move the menu cursor", PauseMenu()'s input==1..4) mirrors the
+	 * bare Wiimote's D-pad, which readevents()'s JOY_WII block reads
+	 * SIDEWAYS-ROTATED -- confirmed by the GC mapping right there: GC is
+	 * always held unrotated, and GC UP/DOWN moves the cursor while GC
+	 * LEFT/RIGHT browses ROMs, so real up/down needs WPAD_BUTTON_RIGHT/LEFT
+	 * and real left/right needs WPAD_BUTTON_UP/DOWN. The Nunchuk/Classic
+	 * stick, in contrast, is read UNROTATED (Wiimote held upright, same as
+	 * its in-game reading) -- so it's crossed here on purpose, not a typo. */
+	#define MENU_STICK_DEADZONE 32 /* out of +-127: past resting jitter, short of a deliberate push */
+	isUp = x < -MENU_STICK_DEADZONE; isDown = x > MENU_STICK_DEADZONE;
+	isRight = y > MENU_STICK_DEADZONE; isLeft = y < -MENU_STICK_DEADZONE;
+	#undef MENU_STICK_DEADZONE
+
+	if (isUp    && !wasUp)    down |= WPAD_BUTTON_UP;
+	if (isDown  && !wasDown)  down |= WPAD_BUTTON_DOWN;
+	if (isLeft  && !wasLeft)  down |= WPAD_BUTTON_LEFT;
+	if (isRight && !wasRight) down |= WPAD_BUTTON_RIGHT;
+	wasUp = isUp; wasDown = isDown; wasLeft = isLeft; wasRight = isRight;
+	return down;
+}
+
+/* Every menu-chrome bit that must NOT fall through to "any other button =
+ * confirm": the Wiimote's own HOME+D-pad, and the Classic Controller's own
+ * HOME+D-pad (a separate bit range from the Wiimote's -- see wpad.h -- so
+ * neither is covered by the plain Wiimote mask, and would otherwise select
+ * the highlighted row / trigger the exit dialog instead of just navigating).
+ * Nunchuk has no digital D-pad or HOME of its own, and both expansions'
+ * analog sticks arrive pre-shaped as WPAD_BUTTON_* bits via
+ * expansionMenuButtonsDown(), so they're covered too. */
+#define MENU_RESERVED_BITS (WPAD_BUTTON_HOME | WPAD_BUTTON_UP | WPAD_BUTTON_DOWN | WPAD_BUTTON_LEFT | WPAD_BUTTON_RIGHT | \
+                             WPAD_CLASSIC_BUTTON_HOME | WPAD_CLASSIC_BUTTON_UP | WPAD_CLASSIC_BUTTON_DOWN | WPAD_CLASSIC_BUTTON_LEFT | WPAD_CLASSIC_BUTTON_RIGHT)
+
+/* HOME on the bare Wiimote, or HOME on a Classic Controller riding it -- so
+ * pausing/exiting never requires touching the Wii Remote itself when playing
+ * fully on a Classic Controller (the Nunchuk has no HOME button, so Nunchuk
+ * play still needs the Wiimote for this one action). */
+#define MENU_HOME_BITS (WPAD_BUTTON_HOME | WPAD_CLASSIC_BUTTON_HOME)
+
+/* Picks the scheme a freshly (re)entered title screen should show/use before
+ * the player has explicitly chosen one: a Wii Remote expansion outranks a
+ * GameCube pad (an attachment on the remote already in hand beats reaching
+ * for a second controller), which outranks the bare Wiimote. Whichever
+ * device the player actually presses to confirm "Turn vectrex ON" still
+ * overrides this on the spot -- see the switch's `default:` case in Menu(). */
+static u8 defaultJoystick(u32 expType, int gcConnected){
+	if (expType == WPAD_EXP_NUNCHUK) return JOY_NUNCHUK;
+	if (expType == WPAD_EXP_CLASSIC) return JOY_CLASSIC;
+	if (gcConnected) return JOY_GC;
+	return JOY_WII;
+}
+
 //In-game controls
 static void readevents(){
 		
 		WPAD_ScanPads();
 		PAD_ScanPads();
 
-		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_HOME || PAD_ButtonsDown(0) & PAD_BUTTON_START) { emustatus = 2; sound_stop(); }
+		if (WPAD_ButtonsDown(0) & MENU_HOME_BITS || PAD_ButtonsDown(0) & PAD_BUTTON_START) { emustatus = 2; sound_stop(); }
 		
-		if(joystick == 1)//Wiimote
+		if(joystick == JOY_WII)//Wiimote
 		{
 			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_A) snd_regs[14] &= ~0x01;
 			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_B) snd_regs[14] &= ~0x02;
 			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_1) snd_regs[14] &= ~0x04;
 			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_2) snd_regs[14] &= ~0x08;
-		
+
 			if (WPAD_ButtonsUp(0) & WPAD_BUTTON_A) snd_regs[14] |= 0x01;
 			if (WPAD_ButtonsUp(0) & WPAD_BUTTON_B) snd_regs[14] |= 0x02;
 			if (WPAD_ButtonsUp(0) & WPAD_BUTTON_1) snd_regs[14] |= 0x04;
 			if (WPAD_ButtonsUp(0) & WPAD_BUTTON_2) snd_regs[14] |= 0x08;
-	
+
 			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_RIGHT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_RIGHT) alg_jch1 = 0xff;
 			else if (WPAD_ButtonsDown(0) & WPAD_BUTTON_LEFT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_LEFT) alg_jch1 = 0x00;
 			else alg_jch1 = 0x80;
-		
+
 			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_DOWN || WPAD_ButtonsHeld(0) & WPAD_BUTTON_DOWN) alg_jch0 = 0xff;
 			else if (WPAD_ButtonsDown(0) & WPAD_BUTTON_UP || WPAD_ButtonsHeld(0) & WPAD_BUTTON_UP) alg_jch0 = 0x00;
+			else alg_jch0 = 0x80;
+		}else if(joystick == JOY_NUNCHUK)
+		{
+			expansion_t exp;
+			WPAD_Expansion(0, &exp);
+
+			//A/B stay on the wiimote (thumb/trigger) as the primary Affirmative/
+			//Negative buttons (Vectrex 2/1); Z/C ride the nunchuk for 3/4
+			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_B)         snd_regs[14] &= ~0x01;
+			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_A)         snd_regs[14] &= ~0x02;
+			if (WPAD_ButtonsDown(0) & WPAD_NUNCHUK_BUTTON_Z) snd_regs[14] &= ~0x04;
+			if (WPAD_ButtonsDown(0) & WPAD_NUNCHUK_BUTTON_C) snd_regs[14] &= ~0x08;
+
+			if (WPAD_ButtonsUp(0) & WPAD_BUTTON_B)         snd_regs[14] |= 0x01;
+			if (WPAD_ButtonsUp(0) & WPAD_BUTTON_A)         snd_regs[14] |= 0x02;
+			if (WPAD_ButtonsUp(0) & WPAD_NUNCHUK_BUTTON_Z) snd_regs[14] |= 0x04;
+			if (WPAD_ButtonsUp(0) & WPAD_NUNCHUK_BUTTON_C) snd_regs[14] |= 0x08;
+
+			//Wiimote held upright here, so the d-pad isn't rotated like the bare-Wiimote scheme above
+			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_UP || WPAD_ButtonsHeld(0) & WPAD_BUTTON_UP) alg_jch1 = 0xff;
+			else if (WPAD_ButtonsDown(0) & WPAD_BUTTON_DOWN || WPAD_ButtonsHeld(0) & WPAD_BUTTON_DOWN) alg_jch1 = 0x00;
+			else if (exp.type == WPAD_EXP_NUNCHUK) alg_jch1 = axisToByte(exp.nunchuk.js.pos.y, exp.nunchuk.js.center.y, exp.nunchuk.js.min.y, exp.nunchuk.js.max.y);
+			else alg_jch1 = 0x80;
+
+			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_RIGHT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_RIGHT) alg_jch0 = 0xff;
+			else if (WPAD_ButtonsDown(0) & WPAD_BUTTON_LEFT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_LEFT) alg_jch0 = 0x00;
+			else if (exp.type == WPAD_EXP_NUNCHUK) alg_jch0 = axisToByte(exp.nunchuk.js.pos.x, exp.nunchuk.js.center.x, exp.nunchuk.js.min.x, exp.nunchuk.js.max.x);
+			else alg_jch0 = 0x80;
+		}else if(joystick == JOY_CLASSIC)
+		{
+			expansion_t exp;
+			u32 cd = WPAD_ButtonsDown(0), cu = WPAD_ButtonsUp(0), ch = WPAD_ButtonsHeld(0);
+			WPAD_Expansion(0, &exp);
+
+			//A/B are the primary Affirmative/Negative buttons (Vectrex 2/1); X/Y take 3/4
+			if (cd & WPAD_CLASSIC_BUTTON_B) snd_regs[14] &= ~0x01;
+			if (cd & WPAD_CLASSIC_BUTTON_A) snd_regs[14] &= ~0x02;
+			if (cd & WPAD_CLASSIC_BUTTON_X) snd_regs[14] &= ~0x04;
+			if (cd & WPAD_CLASSIC_BUTTON_Y) snd_regs[14] &= ~0x08;
+
+			if (cu & WPAD_CLASSIC_BUTTON_B) snd_regs[14] |= 0x01;
+			if (cu & WPAD_CLASSIC_BUTTON_A) snd_regs[14] |= 0x02;
+			if (cu & WPAD_CLASSIC_BUTTON_X) snd_regs[14] |= 0x04;
+			if (cu & WPAD_CLASSIC_BUTTON_Y) snd_regs[14] |= 0x08;
+
+			if (cd & WPAD_CLASSIC_BUTTON_UP || ch & WPAD_CLASSIC_BUTTON_UP) alg_jch1 = 0xff;
+			else if (cd & WPAD_CLASSIC_BUTTON_DOWN || ch & WPAD_CLASSIC_BUTTON_DOWN) alg_jch1 = 0x00;
+			else if (exp.type == WPAD_EXP_CLASSIC) alg_jch1 = axisToByte(exp.classic.ljs.pos.y, exp.classic.ljs.center.y, exp.classic.ljs.min.y, exp.classic.ljs.max.y);
+			else alg_jch1 = 0x80;
+
+			if (cd & WPAD_CLASSIC_BUTTON_RIGHT || ch & WPAD_CLASSIC_BUTTON_RIGHT) alg_jch0 = 0xff;
+			else if (cd & WPAD_CLASSIC_BUTTON_LEFT || ch & WPAD_CLASSIC_BUTTON_LEFT) alg_jch0 = 0x00;
+			else if (exp.type == WPAD_EXP_CLASSIC) alg_jch0 = axisToByte(exp.classic.ljs.pos.x, exp.classic.ljs.center.x, exp.classic.ljs.min.x, exp.classic.ljs.max.x);
 			else alg_jch0 = 0x80;
 		}else{ //GC
 			if (PAD_ButtonsDown(0) & PAD_BUTTON_X) snd_regs[14] &= ~0x01;
@@ -633,7 +821,7 @@ static void CreditsScroll(){
 	while(!done){
 		WPAD_ScanPads();
 		PAD_ScanPads();
-		if((WPAD_ButtonsDown(0) & (WPAD_BUTTON_1 | WPAD_BUTTON_B)) ||
+		if((WPAD_ButtonsDown(0) & (WPAD_BUTTON_1 | WPAD_BUTTON_B | WPAD_CLASSIC_BUTTON_B | MENU_HOME_BITS)) ||
 		   (PAD_ButtonsDown(0) & PAD_BUTTON_B))
 			done = 1;
 
@@ -722,6 +910,20 @@ void Menu()
 	emustatus = 1;
 	i = savedBrowse; //restore the last browse index now the scan has finished using i as scratch
 
+	//Best-effort initial guess -- WPAD may not have finished probing a
+	//just-plugged-in expansion yet, so this is allowed to be wrong.
+	//joystickAutoOK keeps it live: PauseMenu() re-applies defaultJoystick()
+	//every frame Settings is open from here until the player picks one, and
+	//confirming "Turn vectrex ON" with a specific device overrides it outright.
+	{
+		u32 expType = WPAD_EXP_NONE, padConnected;
+		WPAD_ScanPads();
+		padConnected = PAD_ScanPads();
+		WPAD_Probe(0, &expType);
+		joystick = defaultJoystick(expType, (padConnected & PAD_CHAN0_BIT) != 0);
+	}
+	joystickAutoOK = 1;
+
 	//Title-screen Y scaled toward the screen centre by the Screen Size setting.
 	#define TSY(Y) ((int)(SCR_CY + ((f32)(Y) - SCR_CY) * s))
 
@@ -735,16 +937,21 @@ void Menu()
 		WPAD_ScanPads();
 		PAD_ScanPads();
 
+		//Wiimote D-pad plus a synthesised equivalent from the Nunchuk/Classic
+		//stick (left stick prioritised, but the bare Wiimote D-pad still works
+		//even with an expansion plugged in)
+		u32 wd = WPAD_ButtonsDown(0) | expansionMenuButtonsDown();
+
 		//Browse ROMs within the current category (Wiimote U/D, GC L/R)
-		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_UP || PAD_ButtonsDown(0) & PAD_BUTTON_LEFT) i--;
-		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_DOWN || PAD_ButtonsDown(0) & PAD_BUTTON_RIGHT) i++;
+		if (wd & WPAD_BUTTON_UP || PAD_ButtonsDown(0) & PAD_BUTTON_LEFT) i--;
+		if (wd & WPAD_BUTTON_DOWN || PAD_ButtonsDown(0) & PAD_BUTTON_RIGHT) i++;
 
 		//Move the menu cursor (Wiimote R/L, GC U/D)
-		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_RIGHT || PAD_ButtonsDown(0) & PAD_BUTTON_UP) MenuOption--;
-		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_LEFT || PAD_ButtonsDown(0) & PAD_BUTTON_DOWN) MenuOption++;
+		if (wd & WPAD_BUTTON_RIGHT || PAD_ButtonsDown(0) & PAD_BUTTON_UP) MenuOption--;
+		if (wd & WPAD_BUTTON_LEFT || PAD_ButtonsDown(0) & PAD_BUTTON_DOWN) MenuOption++;
 		if(MenuOption < 1) MenuOption = 5; if(MenuOption > 5) MenuOption = 1;
 
-		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_HOME || PAD_ButtonsDown(0) & PAD_BUTTON_START)
+		if (WPAD_ButtonsDown(0) & MENU_HOME_BITS || PAD_ButtonsDown(0) & PAD_BUTTON_START)
 		{
 			if(MenuOption == 4)
 			{
@@ -756,15 +963,15 @@ void Menu()
 
 		}
 
-		if (WPAD_ButtonsDown(0) & ~0x00000F80 || PAD_ButtonsDown(0) & ~0x100F) //Exclude PADs and HOME/START. Any other button triggers the selected option
+		if (WPAD_ButtonsDown(0) & ~MENU_RESERVED_BITS || PAD_ButtonsDown(0) & ~0x100F) //Exclude PADs, HOME/START and the D-pads read above. Any other button triggers the selected option
 		{
 			switch(MenuOption)
 			{
-				case 2:	//Cycle cartridge category: Wiimote 1/-/B = back, 2/+/A = forward; GC L = back, R = forward
+				case 2:	//Cycle cartridge category: Wiimote 1/-/B = back, 2/+/A = forward; Classic -/B = back, +/A = forward; GC L = back, R = forward
 				{
-					u32 wd = WPAD_ButtonsDown(0), pd = PAD_ButtonsDown(0);
-					int back    = (wd & (WPAD_BUTTON_1 | WPAD_BUTTON_MINUS | WPAD_BUTTON_B)) || (pd & PAD_TRIGGER_L);
-					int forward = (wd & (WPAD_BUTTON_2 | WPAD_BUTTON_PLUS  | WPAD_BUTTON_A)) || (pd & PAD_TRIGGER_R);
+					u32 pd = PAD_ButtonsDown(0); //wd (outer scope) already carries the Wiimote's own buttons
+					int back    = (wd & (WPAD_BUTTON_1 | WPAD_BUTTON_MINUS | WPAD_BUTTON_B | WPAD_CLASSIC_BUTTON_MINUS | WPAD_CLASSIC_BUTTON_B)) || (pd & PAD_TRIGGER_L);
+					int forward = (wd & (WPAD_BUTTON_2 | WPAD_BUTTON_PLUS  | WPAD_BUTTON_A | WPAD_CLASSIC_BUTTON_PLUS  | WPAD_CLASSIC_BUTTON_A)) || (pd & PAD_TRIGGER_R);
 					if(back)         { currentCategory = (Category)((currentCategory + CAT_COUNT - 1) % CAT_COUNT); i = 0; }
 					else if(forward) { currentCategory = (Category)((currentCategory + 1) % CAT_COUNT); i = 0; }
 				}
@@ -785,8 +992,16 @@ void Menu()
 				{
 					turnOn = 1;
 					savedCategory = currentCategory; savedBrowse = i; //remember the position for next time
-					if (WPAD_ButtonsDown(0) & ~0x00000F80) joystick = 1;
-					else joystick = 0;
+					if (WPAD_ButtonsDown(0) & ~0x00000F80)
+					{
+						//Whichever expansion is on the Wiimote right now becomes the default scheme
+						u32 expType = WPAD_EXP_NONE;
+						WPAD_Probe(0, &expType);
+						if (expType == WPAD_EXP_NUNCHUK) joystick = JOY_NUNCHUK;
+						else if (expType == WPAD_EXP_CLASSIC) joystick = JOY_CLASSIC;
+						else joystick = JOY_WII;
+					}
+					else joystick = JOY_GC;
 
 					if (currentCategory == CAT_NA)
 					{
@@ -900,7 +1115,7 @@ void Menu()
 		}
 
 		if(currentCategory == CAT_NA)
-			PrintRomTitle(TSY(340), "Minestorm", s);
+			PrintRomTitle(TSY(340), "Mine Storm", s);
 		else if(currentCategory == CAT_SD){
 			if(pent != NULL){
 				char title[256];
@@ -930,20 +1145,48 @@ void PauseMenu()
 							GRRLIB_WidthTTF(myFont,">", (FONTHEAD+FONTOPT)/2)};
 	
 	WPAD_ScanPads();
-	PAD_ScanPads();
-	
-	if (WPAD_ButtonsDown(0) & WPAD_BUTTON_RIGHT || PAD_ButtonsDown(0) & PAD_BUTTON_UP) input = 1;
-	if (WPAD_ButtonsDown(0) & WPAD_BUTTON_LEFT || PAD_ButtonsDown(0) & PAD_BUTTON_DOWN) input = 2;
-	if (WPAD_ButtonsDown(0) & WPAD_BUTTON_UP || PAD_ButtonsDown(0) & PAD_BUTTON_LEFT) input = 3;
-	if (WPAD_ButtonsDown(0) & WPAD_BUTTON_DOWN || PAD_ButtonsDown(0) & PAD_BUTTON_RIGHT) input = 4;
-	if (WPAD_ButtonsDown(0) & ~0x00000F80 || PAD_ButtonsDown(0) & ~0x100F) input = 5;
-	if (WPAD_ButtonsDown(0) & WPAD_BUTTON_HOME || PAD_ButtonsDown(0) & PAD_BUTTON_START) input = 6;
+	u32 padConnected = PAD_ScanPads();
+	int gcConnected = (padConnected & PAD_CHAN0_BIT) != 0;
+
+	//What's plugged into the Wiimote's extension port right now, if anything
+	u32 expType = WPAD_EXP_NONE;
+	WPAD_Probe(0, &expType);
+
+	//On the title screen's Settings view, keep tracking the best available
+	//scheme every frame until the player manually cycles one (joystickAutoOK)
+	//-- Menu()'s one-shot seed can land before WPAD finishes probing a
+	//just-plugged-in expansion and would otherwise stick on the wrong guess.
+	//Elsewhere (in-game pause), only ever downgrade to the bare Wiimote if
+	//the active expansion/controller disappears -- an active session's
+	//scheme shouldn't silently change under the player.
+	if (settingsFromTitle && joystickAutoOK)
+		joystick = defaultJoystick(expType, gcConnected);
+	else if ((joystick == JOY_NUNCHUK && expType != WPAD_EXP_NUNCHUK) ||
+	         (joystick == JOY_CLASSIC && expType != WPAD_EXP_CLASSIC) ||
+	         (joystick == JOY_GC && !gcConnected))
+		joystick = JOY_WII;
+
+	//Wiimote D-pad plus a synthesised equivalent from the Nunchuk/Classic stick
+	u32 wd = WPAD_ButtonsDown(0) | expansionMenuButtonsDown();
+
+	if (wd & WPAD_BUTTON_RIGHT || PAD_ButtonsDown(0) & PAD_BUTTON_UP) input = 1;
+	if (wd & WPAD_BUTTON_LEFT || PAD_ButtonsDown(0) & PAD_BUTTON_DOWN) input = 2;
+	if (wd & WPAD_BUTTON_UP || PAD_ButtonsDown(0) & PAD_BUTTON_LEFT) input = 3;
+	if (wd & WPAD_BUTTON_DOWN || PAD_ButtonsDown(0) & PAD_BUTTON_RIGHT) input = 4;
+	if (WPAD_ButtonsDown(0) & ~MENU_RESERVED_BITS || PAD_ButtonsDown(0) & ~0x100F) input = 5;
+	if (WPAD_ButtonsDown(0) & MENU_HOME_BITS || PAD_ButtonsDown(0) & PAD_BUTTON_START) input = 6;
 
 	if(settingsFromTitle) preview_render(); //no game to freeze yet: preview the options on a still instead
 	else pause_render(); //Render the screen as it was when the emulation was interrumped
 
-	//Holding A/R peeks at the paused game behind the menu; pointless on the title screen
-	if(settingsFromTitle || (!(PAD_ButtonsHeld(0) & PAD_TRIGGER_R) && !(WPAD_ButtonsHeld(0) & WPAD_BUTTON_A)))
+	//Holding A/R peeks at the paused game behind the menu; pointless on the title screen.
+	//"Held" must exclude the very frame the button went down -- ButtonsHeld is
+	//already true on that first frame -- or a tap of A can never confirm
+	//anything here: it gets swallowed into peek mode before `input` is acted on.
+	{
+		u8 peekA = (WPAD_ButtonsHeld(0) & WPAD_BUTTON_A) && !(WPAD_ButtonsDown(0) & WPAD_BUTTON_A);
+		u8 peekR = (PAD_ButtonsHeld(0) & PAD_TRIGGER_R) && !(PAD_ButtonsDown(0) & PAD_TRIGGER_R);
+	if(settingsFromTitle || (!peekR && !peekA))
 	{
 		GRRLIB_Rectangle(0, 160, rmode->fbWidth, 160, 0x000000D0, 1);
 
@@ -1089,7 +1332,7 @@ void PauseMenu()
 
 				if(input == 3 || input == 4){
 					switch(pauseMenu[1]){
-						case 2: joystick ^= 1; break;
+						case 2: joystickAutoOK = 0; joystickCycle(expType, gcConnected, input == 3 ? -1 : 1); break;
 						case 3:	optOverlay[0] ^= 1; break;
 						case 4: optVtxCustomColor[0] ^= 1; break;
 						case 5:	optGlow[0] ^= 1; break;
@@ -1128,7 +1371,9 @@ void PauseMenu()
 				if(settingsFromTitle) PrintCenteredTTF(288, "Back", FONTHEAD, 0xFF0000FF);
 				else GRRLIB_PrintfTTF( MenuOffsets[1], 288, myFont,"Turn vectrex OFF", FONTHEAD,0xFF0000FF);
 
-				if (joystick == 1) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 176, myFont,"[Wii]", FONTOPT, 0xADFF2FFF);
+				if (joystick == JOY_WII) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 176, myFont,"[Wii]", FONTOPT, 0xADFF2FFF);
+				else if (joystick == JOY_NUNCHUK) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 176, myFont,"[Nunchuk]", FONTOPT, 0xADFF2FFF);
+				else if (joystick == JOY_CLASSIC) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 176, myFont,"[Classic]", FONTOPT, 0xADFF2FFF);
 				else GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 176, myFont,"[GC]", FONTOPT, 0xADFF2FFF);
 
 				if (optOverlay[0]) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 194, myFont,"[ON]", FONTOPT, 0xADFF2FFF);
@@ -1161,6 +1406,7 @@ void PauseMenu()
 			break;
 		}
 
+	}
 	}
 
 	GRRLIB_Render();
@@ -1245,7 +1491,18 @@ int main(int argc, char *argv[]){
 	scl_factor = ALG_MAX_Y / 444;
 	offx = (640 - ALG_MAX_X / scl_factor) / 2;
 	offy = (480 - ALG_MAX_Y / scl_factor) / 2;
-	
+
+	/* A console set to 16:9 anamorphically stretches our 4:3 framebuffer;
+	 * pre-squeeze the game picture by 3/4 so it comes back out correct,
+	 * pillarboxed. The gameplay/pause/preview renderers never draw outside
+	 * that squeezed region and don't clear per-frame (that's how the
+	 * persistence trail effect works), so both GX buffers are blanked to
+	 * black here, once, up front -- the freed-up margin then stays black
+	 * for the rest of the session without needing a per-frame clear. */
+	if (CONF_GetAspectRatio() == CONF_ASPECT_16_9) aspectCorrection = 3.0f / 4.0f;
+	GRRLIB_FillScreen(0x000000FF); GRRLIB_Render();
+	GRRLIB_FillScreen(0x000000FF); GRRLIB_Render();
+
 	//Load splashscreen, font and Minestorm
 	splash = GRRLIB_LoadTexture(splashscreen_png);
 	myFont = GRRLIB_LoadTTF(Font_ttf, Font_ttf_size);
