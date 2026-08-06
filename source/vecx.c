@@ -446,6 +446,11 @@ unsigned char read8 (unsigned address)
 				data = (unsigned char) (via_ier | 0x80);
 				break;
 			}
+#ifdef VECX_TRACE
+			/* unlike vecx_trace_ioread() above, this sees the resolved byte. */
+			{ extern void vecx_trace_ioread_ret (unsigned reg, unsigned char data, unsigned orb);
+			  vecx_trace_ioread_ret (address & 0xf, data, via_orb); }
+#endif
 		}
 	} else if (address < 0x8000) {
 		/* cartridge */

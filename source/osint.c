@@ -27,6 +27,12 @@
 #include "base_png.h" //Still frame of Mine Storm, used to preview the display options
 #include "Font_ttf.h"
 
+#include "btnmap_base_png.h" //Edit Controls: unhighlighted button diagram
+#include "btnmap_select1_png.h" //Edit Controls: button diagram, slot 1 glowing
+#include "btnmap_select2_png.h"
+#include "btnmap_select3_png.h"
+#include "btnmap_select4_png.h"
+
 #define EMU_TIMER 20 /* the emulators heart beats at 20 milliseconds */
 #define FONTHEAD 36 /* Font sizes */
 #define FONTOPT 32
@@ -50,6 +56,16 @@ u8 emustatus, joystick;
  * offered; Nunchuk/Classic only appear in the cycle when WPAD_Probe(0, ...)
  * reports that expansion actually plugged in (see joystickCycle()). */
 enum { JOY_GC = 0, JOY_WII, JOY_NUNCHUK, JOY_CLASSIC, JOY_MODE_COUNT };
+
+/* Bit for GC channel 0 in PAD_ScanPads()'s *return value* specifically --
+ * NOT the same as libogc's own PAD_CHAN0_BIT (0x80000000)! That constant is
+ * for PAD_Reset()/PAD_Recalibrate()'s channel-mask *parameter*; internally
+ * PAD_ScanPads() builds its returned "connected" mask with a completely
+ * different, undocumented `1<<channel` scheme (see libogc's pad.c). Testing
+ * `padConnected & PAD_CHAN0_BIT` therefore checks for a channel-31
+ * controller that can never exist, is always false, and is why GC never
+ * showed up as a scheme even with a real pad plugged in and working. */
+#define PAD_CHAN0_CONNECTED 0x01
 
 /* Set false to skip the (expensive) vector draw for one frame. The renderer
  * runs inside vecx_emu, so skipping it when the audio ring runs low keeps
@@ -79,6 +95,39 @@ GRRLIB_ttfFont *myFont;
  * together they are ~1.5MB of contiguous texture that would otherwise sit in
  * the heap for the whole session. */
 static GRRLIB_texImg *preview, *previewOvl;
+
+/* Edit Controls page: the unhighlighted diagram plus one pre-rendered variant
+ * per button slot with that slot's glow ring lit, swapped in wholesale rather
+ * than composited at runtime. Loaded only while that page is open. */
+static GRRLIB_texImg *btnmapBase, *btnmapSelect[4];
+
+/* Edit Controls: true while waiting for the player to press the new button
+ * for the slot they just confirmed. remapFlashOn/remapFlashT0 drive its
+ * slow on/off glow (0.5s each way, kept slow deliberately -- see the
+ * pauseMenu[0]==7 case in PauseMenu() -- so it can't trigger photosensitive
+ * reactions). */
+static u8 remapWaiting;
+static u8 remapFlashOn = 1;
+static u64 remapFlashT0;
+
+/* Edit Controls: true after the player tried to back out (input==6) while one
+ * of the 4 Vectrex buttons was still unmapped. Blocks leaving the page and
+ * shows a warning until either all 4 get mapped or some other input arrives
+ * (see the pauseMenu[0]==7 case in PauseMenu()). */
+static u8 warnUnmapped;
+
+/* Edit Controls: true when the cursor is on the "Done" row below the button
+ * diagram rather than on one of the 4 slots (pauseMenu[1] keeps tracking
+ * which slot to return to). Down moves onto Done, Up moves back off it. */
+static u8 onDone;
+
+/* Set the instant Edit Controls hands back to the main option list (see
+ * "confirming Done" below), to block the A/R peek-behind-the-menu feature
+ * until A and R are both seen fully released at least once. Without this,
+ * the same A press that just confirmed Done is still "held" for a couple of
+ * frames on the list screen that appears under it -- peekA reads that as a
+ * hold-to-peek request and blanks the just-returned-to menu right back out. */
+static u8 suppressPeek;
 
 /* Overlay geometry. The overlay art is 388x480 and sits at OVL_X so that its
  * transparent window lands over the 358x445 vector area at (offx, offy). The
@@ -443,7 +492,7 @@ static void previewFree(){
  * Both vary with the string (a title ending in ')' loses ~5px at FONTROM,
  * one ending in 'm' barely 1px), which is why some ROM names looked centred
  * and others visibly did not. Measure the real ink extent instead. */
-static int centerXTTF(const char *str, unsigned size){
+static int centerXAtTTF(const char *str, unsigned size, int targetX){
 	FT_Face face = (myFont != NULL) ? (FT_Face) myFont->face : NULL;
 	int pen = 0, first = 0, last = 0, seen = 0;
 	const unsigned char *p;
@@ -458,12 +507,49 @@ static int centerXTTF(const char *str, unsigned size){
 			pen += face->glyph->advance.x >> 6;
 		}
 
-	if (!seen) return ((int) rmode->fbWidth - (int) GRRLIB_WidthTTF(myFont, str, size)) / 2;
-	return ((int) rmode->fbWidth - (last - first)) / 2 - first;
+	if (!seen) return targetX - (int) GRRLIB_WidthTTF(myFont, str, size) / 2;
+	return targetX - (last - first) / 2 - first;
+}
+
+static int centerXTTF(const char *str, unsigned size){
+	return centerXAtTTF(str, size, (int) rmode->fbWidth / 2);
 }
 
 static void PrintCenteredTTF(int y, const char *str, unsigned size, u32 color){
 	GRRLIB_PrintfTTF(centerXTTF(str, size), y, myFont, str, size, color);
+}
+
+/* Same idea, vertical axis: GRRLIB_PrintfTTF's y is the top of the glyph
+ * cell, and each glyph's ink is drawn at y + fontSize - bitmap_top (see
+ * GRRLIB_ttf.c's DrawBitmap call) -- so how far the ink actually sits below
+ * that cell top depends on the glyph's own height. A round digit and a
+ * short mark like "--" don't sit at the same place within their cell, which
+ * is why a flat "y - size/2" offset centres one and not the other. Needed
+ * for the Edit Controls button labels, which must land in the middle of a
+ * fixed-size circle rather than just flow under a heading. */
+static int centerYInkTTF(const char *str, unsigned size, int targetY){
+	FT_Face face = (myFont != NULL) ? (FT_Face) myFont->face : NULL;
+	int top = 0, bottom = 0, seen = 0;
+	const unsigned char *p;
+
+	if (face != NULL && FT_Set_Pixel_Sizes(face, 0, size) == 0)
+		for (p = (const unsigned char *) str; *p != '\0'; p++) {
+			if (FT_Load_Char(face, *p, FT_LOAD_RENDER) != 0) continue;
+			if (face->glyph->bitmap.rows > 0) {
+				int relTop = (int) size - face->glyph->bitmap_top;
+				int relBottom = relTop + (int) face->glyph->bitmap.rows;
+				if (!seen) { top = relTop; bottom = relBottom; seen = 1; }
+				else { if (relTop < top) top = relTop; if (relBottom > bottom) bottom = relBottom; }
+			}
+		}
+
+	if (!seen) return targetY - (int) size / 2;
+	return targetY - (top + bottom) / 2;
+}
+
+//Centres a string on both axes around an arbitrary screen point (as opposed to PrintCenteredTTF, which only centres horizontally and takes y as-is)
+static void PrintInkCenteredAt(int targetX, int targetY, const char *str, unsigned size, u32 color){
+	GRRLIB_PrintfTTF(centerXAtTTF(str, size, targetX), centerYInkTTF(str, size, targetY), myFont, str, size, color);
 }
 
 /* ROM titles come from the bundled catalogue AND from arbitrary SD filenames,
@@ -568,7 +654,12 @@ static void joystickCycle(u32 expType, int gcConnected, int dir){
  * reading the stick as "held" would auto-repeat every poll instead of once
  * per push, so this edge-detects it exactly like WPAD_ButtonsDown() does for
  * real buttons. Returns bits OR-able straight into a WPAD_ButtonsDown()-
- * shaped value (see the deadzone comment below for why x/y land crossed). */
+ * shaped value (see the deadzone comment below for why x/y land crossed).
+ * Also folds in the Classic Controller's own physical D-pad, unrotated same
+ * as the stick so it needs the identical cross. The Wii U Pro Controller
+ * reports as WPAD_EXP_CLASSIC too -- libogc has no separate expansion type
+ * for it (see wiiuse.h's classic_ctrl_t.type comment "original, pro, wiiu
+ * pro") -- so this covers it automatically. */
 static u32 expansionMenuButtonsDown(){
 	static u8 wasUp, wasDown, wasLeft, wasRight;
 	expansion_t exp;
@@ -604,8 +695,42 @@ static u32 expansionMenuButtonsDown(){
 	if (isLeft  && !wasLeft)  down |= WPAD_BUTTON_LEFT;
 	if (isRight && !wasRight) down |= WPAD_BUTTON_RIGHT;
 	wasUp = isUp; wasDown = isDown; wasLeft = isLeft; wasRight = isRight;
+
+	if (exp.type == WPAD_EXP_CLASSIC) {
+		/* WPAD_ButtonsDown() is already edge-detected, unlike the stick
+		 * above, so these fold straight in -- no extra latch needed. */
+		u32 cd = WPAD_ButtonsDown(0);
+		if (cd & WPAD_CLASSIC_BUTTON_UP)    down |= WPAD_BUTTON_RIGHT;
+		if (cd & WPAD_CLASSIC_BUTTON_DOWN)  down |= WPAD_BUTTON_LEFT;
+		if (cd & WPAD_CLASSIC_BUTTON_LEFT)  down |= WPAD_BUTTON_UP;
+		if (cd & WPAD_CLASSIC_BUTTON_RIGHT) down |= WPAD_BUTTON_DOWN;
+	}
+
 	return down;
 }
+
+/* Synthesises PAD_BUTTON_UP/DOWN/LEFT/RIGHT-shaped "just pressed" bits from
+ * the GameCube controller's control stick, for the menu screens that
+ * otherwise only read its physical D-pad. GC is always held unrotated, same
+ * as its own D-pad, so this maps straight across -- no crossing needed,
+ * unlike the Nunchuk/Classic stick above which compensates for the
+ * sideways-Wiimote-twisted WPAD_BUTTON_* wiring it feeds into. */
+#define PAD_STICK_DEADZONE 32 /* PAD_StickX/Y run roughly +-100 at full deflection */
+static u32 gcMenuButtonsDown(){
+	static u8 wasUp, wasDown, wasLeft, wasRight;
+	s8 x = PAD_StickX(0), y = PAD_StickY(0);
+	u8 isUp = y > PAD_STICK_DEADZONE, isDown = y < -PAD_STICK_DEADZONE;
+	u8 isLeft = x < -PAD_STICK_DEADZONE, isRight = x > PAD_STICK_DEADZONE;
+	u32 down = 0;
+
+	if (isUp    && !wasUp)    down |= PAD_BUTTON_UP;
+	if (isDown  && !wasDown)  down |= PAD_BUTTON_DOWN;
+	if (isLeft  && !wasLeft)  down |= PAD_BUTTON_LEFT;
+	if (isRight && !wasRight) down |= PAD_BUTTON_RIGHT;
+	wasUp = isUp; wasDown = isDown; wasLeft = isLeft; wasRight = isRight;
+	return down;
+}
+#undef PAD_STICK_DEADZONE
 
 /* Every menu-chrome bit that must NOT fall through to "any other button =
  * confirm": the Wiimote's own HOME+D-pad, and the Classic Controller's own
@@ -637,6 +762,98 @@ static u8 defaultJoystick(u32 expType, int gcConnected){
 	return JOY_WII;
 }
 
+/* Which physical button produces each Vectrex button (1-4), per scheme --
+ * 0 means unmapped. Defaults match the scheme's original hardcoded wiring:
+ * Wii A/B/1/2, Nunchuk B/A/Z/C, Classic B/A/X/Y, GC A/B/X/Y. Player-editable
+ * from Settings > Edit Controls (see the pauseMenu[0]==7 case below). */
+static u32 btnMapWii[4]     = { WPAD_BUTTON_A, WPAD_BUTTON_B, WPAD_BUTTON_1, WPAD_BUTTON_2 };
+static u32 btnMapNunchuk[4] = { WPAD_BUTTON_B, WPAD_BUTTON_A, WPAD_NUNCHUK_BUTTON_Z, WPAD_NUNCHUK_BUTTON_C };
+static u32 btnMapClassic[4] = { WPAD_CLASSIC_BUTTON_B, WPAD_CLASSIC_BUTTON_A, WPAD_CLASSIC_BUTTON_X, WPAD_CLASSIC_BUTTON_Y };
+static u32 btnMapGC[4]      = { PAD_BUTTON_A, PAD_BUTTON_B, PAD_BUTTON_X, PAD_BUTTON_Y };
+
+/* Buttons a player is allowed to remap onto. D-pad/HOME/START stay hardwired
+ * to navigation/pause, same reasoning as MENU_RESERVED_BITS/MENU_HOME_BITS
+ * above -- letting those be reassigned would fight the menu system itself. */
+#define REMAP_WII_MASK     (WPAD_BUTTON_A | WPAD_BUTTON_B | WPAD_BUTTON_1 | WPAD_BUTTON_2 | WPAD_BUTTON_MINUS | WPAD_BUTTON_PLUS)
+#define REMAP_NUNCHUK_MASK (REMAP_WII_MASK | WPAD_NUNCHUK_BUTTON_Z | WPAD_NUNCHUK_BUTTON_C)
+#define REMAP_CLASSIC_MASK (WPAD_CLASSIC_BUTTON_A | WPAD_CLASSIC_BUTTON_B | WPAD_CLASSIC_BUTTON_X | WPAD_CLASSIC_BUTTON_Y | \
+                             WPAD_CLASSIC_BUTTON_ZL | WPAD_CLASSIC_BUTTON_ZR | WPAD_CLASSIC_BUTTON_FULL_L | WPAD_CLASSIC_BUTTON_FULL_R | \
+                             WPAD_CLASSIC_BUTTON_MINUS | WPAD_CLASSIC_BUTTON_PLUS)
+#define REMAP_GC_MASK      (PAD_BUTTON_A | PAD_BUTTON_B | PAD_BUTTON_X | PAD_BUTTON_Y | PAD_TRIGGER_L | PAD_TRIGGER_R | PAD_TRIGGER_Z)
+
+static u32* schemeButtonMap(u8 scheme){
+	switch (scheme) {
+		case JOY_NUNCHUK: return btnMapNunchuk;
+		case JOY_CLASSIC: return btnMapClassic;
+		case JOY_GC:      return btnMapGC;
+		default:          return btnMapWii;
+	}
+}
+
+//Applies a 4-slot button map (map[i] = physical bit for Vectrex button i+1, 0 = unmapped)
+static void applyButtonMap(const u32 map[4], u32 down, u32 up){
+	int i;
+	for (i = 0; i < 4; i++) {
+		if (map[i] == 0) continue;
+		if (down & map[i]) snd_regs[14] &= ~(1 << i);
+		if (up   & map[i]) snd_regs[14] |= (1 << i);
+	}
+}
+
+//Short on-screen name for a physical button bit, for the Edit Controls page. "--" = unmapped.
+static const char* buttonLabel(u8 scheme, u32 bit){
+	if (bit == 0) return "--";
+	if (scheme == JOY_GC) {
+		if (bit == PAD_BUTTON_A) return "A";
+		if (bit == PAD_BUTTON_B) return "B";
+		if (bit == PAD_BUTTON_X) return "X";
+		if (bit == PAD_BUTTON_Y) return "Y";
+		if (bit == PAD_TRIGGER_L) return "L";
+		if (bit == PAD_TRIGGER_R) return "R";
+		if (bit == PAD_TRIGGER_Z) return "Z";
+		return "?";
+	}
+	if (scheme == JOY_CLASSIC) {
+		if (bit == WPAD_CLASSIC_BUTTON_A) return "A";
+		if (bit == WPAD_CLASSIC_BUTTON_B) return "B";
+		if (bit == WPAD_CLASSIC_BUTTON_X) return "X";
+		if (bit == WPAD_CLASSIC_BUTTON_Y) return "Y";
+		if (bit == WPAD_CLASSIC_BUTTON_ZL) return "ZL";
+		if (bit == WPAD_CLASSIC_BUTTON_ZR) return "ZR";
+		if (bit == WPAD_CLASSIC_BUTTON_FULL_L) return "L";
+		if (bit == WPAD_CLASSIC_BUTTON_FULL_R) return "R";
+		if (bit == WPAD_CLASSIC_BUTTON_MINUS) return "-";
+		if (bit == WPAD_CLASSIC_BUTTON_PLUS) return "+";
+		return "?";
+	}
+	//Wii and Nunchuk share the Wiimote's own button namespace
+	if (bit == WPAD_BUTTON_A) return "A";
+	if (bit == WPAD_BUTTON_B) return "B";
+	if (bit == WPAD_BUTTON_1) return "1";
+	if (bit == WPAD_BUTTON_2) return "2";
+	if (bit == WPAD_BUTTON_MINUS) return "-";
+	if (bit == WPAD_BUTTON_PLUS) return "+";
+	if (scheme == JOY_NUNCHUK) {
+		if (bit == WPAD_NUNCHUK_BUTTON_Z) return "Z";
+		if (bit == WPAD_NUNCHUK_BUTTON_C) return "C";
+	}
+	return "?";
+}
+
+static void controlsLoad(){
+	if (btnmapBase == NULL)    btnmapBase    = GRRLIB_LoadTexture(btnmap_base_png);
+	if (btnmapSelect[0] == NULL) btnmapSelect[0] = GRRLIB_LoadTexture(btnmap_select1_png);
+	if (btnmapSelect[1] == NULL) btnmapSelect[1] = GRRLIB_LoadTexture(btnmap_select2_png);
+	if (btnmapSelect[2] == NULL) btnmapSelect[2] = GRRLIB_LoadTexture(btnmap_select3_png);
+	if (btnmapSelect[3] == NULL) btnmapSelect[3] = GRRLIB_LoadTexture(btnmap_select4_png);
+}
+static void controlsFree(){
+	int i;
+	if (btnmapBase != NULL) { GRRLIB_FreeTexture(btnmapBase); btnmapBase = NULL; }
+	for (i = 0; i < 4; i++)
+		if (btnmapSelect[i] != NULL) { GRRLIB_FreeTexture(btnmapSelect[i]); btnmapSelect[i] = NULL; }
+}
+
 //In-game controls
 static void readevents(){
 		
@@ -647,15 +864,7 @@ static void readevents(){
 		
 		if(joystick == JOY_WII)//Wiimote
 		{
-			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_A) snd_regs[14] &= ~0x01;
-			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_B) snd_regs[14] &= ~0x02;
-			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_1) snd_regs[14] &= ~0x04;
-			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_2) snd_regs[14] &= ~0x08;
-
-			if (WPAD_ButtonsUp(0) & WPAD_BUTTON_A) snd_regs[14] |= 0x01;
-			if (WPAD_ButtonsUp(0) & WPAD_BUTTON_B) snd_regs[14] |= 0x02;
-			if (WPAD_ButtonsUp(0) & WPAD_BUTTON_1) snd_regs[14] |= 0x04;
-			if (WPAD_ButtonsUp(0) & WPAD_BUTTON_2) snd_regs[14] |= 0x08;
+			applyButtonMap(btnMapWii, WPAD_ButtonsDown(0), WPAD_ButtonsUp(0));
 
 			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_RIGHT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_RIGHT) alg_jch1 = 0xff;
 			else if (WPAD_ButtonsDown(0) & WPAD_BUTTON_LEFT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_LEFT) alg_jch1 = 0x00;
@@ -669,17 +878,7 @@ static void readevents(){
 			expansion_t exp;
 			WPAD_Expansion(0, &exp);
 
-			//A/B stay on the wiimote (thumb/trigger) as the primary Affirmative/
-			//Negative buttons (Vectrex 2/1); Z/C ride the nunchuk for 3/4
-			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_B)         snd_regs[14] &= ~0x01;
-			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_A)         snd_regs[14] &= ~0x02;
-			if (WPAD_ButtonsDown(0) & WPAD_NUNCHUK_BUTTON_Z) snd_regs[14] &= ~0x04;
-			if (WPAD_ButtonsDown(0) & WPAD_NUNCHUK_BUTTON_C) snd_regs[14] &= ~0x08;
-
-			if (WPAD_ButtonsUp(0) & WPAD_BUTTON_B)         snd_regs[14] |= 0x01;
-			if (WPAD_ButtonsUp(0) & WPAD_BUTTON_A)         snd_regs[14] |= 0x02;
-			if (WPAD_ButtonsUp(0) & WPAD_NUNCHUK_BUTTON_Z) snd_regs[14] |= 0x04;
-			if (WPAD_ButtonsUp(0) & WPAD_NUNCHUK_BUTTON_C) snd_regs[14] |= 0x08;
+			applyButtonMap(btnMapNunchuk, WPAD_ButtonsDown(0), WPAD_ButtonsUp(0));
 
 			//Wiimote held upright here, so the d-pad isn't rotated like the bare-Wiimote scheme above
 			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_UP || WPAD_ButtonsHeld(0) & WPAD_BUTTON_UP) alg_jch1 = 0xff;
@@ -697,16 +896,7 @@ static void readevents(){
 			u32 cd = WPAD_ButtonsDown(0), cu = WPAD_ButtonsUp(0), ch = WPAD_ButtonsHeld(0);
 			WPAD_Expansion(0, &exp);
 
-			//A/B are the primary Affirmative/Negative buttons (Vectrex 2/1); X/Y take 3/4
-			if (cd & WPAD_CLASSIC_BUTTON_B) snd_regs[14] &= ~0x01;
-			if (cd & WPAD_CLASSIC_BUTTON_A) snd_regs[14] &= ~0x02;
-			if (cd & WPAD_CLASSIC_BUTTON_X) snd_regs[14] &= ~0x04;
-			if (cd & WPAD_CLASSIC_BUTTON_Y) snd_regs[14] &= ~0x08;
-
-			if (cu & WPAD_CLASSIC_BUTTON_B) snd_regs[14] |= 0x01;
-			if (cu & WPAD_CLASSIC_BUTTON_A) snd_regs[14] |= 0x02;
-			if (cu & WPAD_CLASSIC_BUTTON_X) snd_regs[14] |= 0x04;
-			if (cu & WPAD_CLASSIC_BUTTON_Y) snd_regs[14] |= 0x08;
+			applyButtonMap(btnMapClassic, cd, cu);
 
 			if (cd & WPAD_CLASSIC_BUTTON_UP || ch & WPAD_CLASSIC_BUTTON_UP) alg_jch1 = 0xff;
 			else if (cd & WPAD_CLASSIC_BUTTON_DOWN || ch & WPAD_CLASSIC_BUTTON_DOWN) alg_jch1 = 0x00;
@@ -718,17 +908,7 @@ static void readevents(){
 			else if (exp.type == WPAD_EXP_CLASSIC) alg_jch0 = axisToByte(exp.classic.ljs.pos.x, exp.classic.ljs.center.x, exp.classic.ljs.min.x, exp.classic.ljs.max.x);
 			else alg_jch0 = 0x80;
 		}else{ //GC
-			if (PAD_ButtonsDown(0) & PAD_BUTTON_X) snd_regs[14] &= ~0x01;
-			if (PAD_ButtonsDown(0) & PAD_BUTTON_Y) snd_regs[14] &= ~0x02;
-			if (PAD_ButtonsDown(0) & PAD_BUTTON_A) snd_regs[14] &= ~0x04;
-			if (PAD_ButtonsDown(0) & PAD_BUTTON_B) snd_regs[14] &= ~0x08;
-			
-			if (PAD_ButtonsUp(0) & PAD_BUTTON_X) snd_regs[14] |= 0x01;
-			if (PAD_ButtonsUp(0) & PAD_BUTTON_Y) snd_regs[14] |= 0x02;
-			if (PAD_ButtonsUp(0) & PAD_BUTTON_A) snd_regs[14] |= 0x04;
-			if (PAD_ButtonsUp(0) & PAD_BUTTON_B) snd_regs[14] |= 0x08;
-
-
+			applyButtonMap(btnMapGC, PAD_ButtonsDown(0), PAD_ButtonsUp(0));
 
 			if (PAD_ButtonsDown(0) & PAD_BUTTON_UP || PAD_ButtonsHeld(0) & PAD_BUTTON_UP) alg_jch1 = 0xff;
 			else if (PAD_ButtonsDown(0) & PAD_BUTTON_DOWN || PAD_ButtonsHeld(0) & PAD_BUTTON_DOWN) alg_jch1 = 0x00;
@@ -920,7 +1100,7 @@ void Menu()
 		WPAD_ScanPads();
 		padConnected = PAD_ScanPads();
 		WPAD_Probe(0, &expType);
-		joystick = defaultJoystick(expType, (padConnected & PAD_CHAN0_BIT) != 0);
+		joystick = defaultJoystick(expType, (padConnected & PAD_CHAN0_CONNECTED) != 0);
 	}
 	joystickAutoOK = 1;
 
@@ -938,17 +1118,19 @@ void Menu()
 		PAD_ScanPads();
 
 		//Wiimote D-pad plus a synthesised equivalent from the Nunchuk/Classic
-		//stick (left stick prioritised, but the bare Wiimote D-pad still works
+		//stick and D-pad (left stick prioritised, but the bare Wiimote D-pad still works
 		//even with an expansion plugged in)
 		u32 wd = WPAD_ButtonsDown(0) | expansionMenuButtonsDown();
+		//GC's own D-pad plus a synthesised equivalent from its control stick
+		u32 gd = PAD_ButtonsDown(0) | gcMenuButtonsDown();
 
 		//Browse ROMs within the current category (Wiimote U/D, GC L/R)
-		if (wd & WPAD_BUTTON_UP || PAD_ButtonsDown(0) & PAD_BUTTON_LEFT) i--;
-		if (wd & WPAD_BUTTON_DOWN || PAD_ButtonsDown(0) & PAD_BUTTON_RIGHT) i++;
+		if (wd & WPAD_BUTTON_UP || gd & PAD_BUTTON_LEFT) i--;
+		if (wd & WPAD_BUTTON_DOWN || gd & PAD_BUTTON_RIGHT) i++;
 
 		//Move the menu cursor (Wiimote R/L, GC U/D)
-		if (wd & WPAD_BUTTON_RIGHT || PAD_ButtonsDown(0) & PAD_BUTTON_UP) MenuOption--;
-		if (wd & WPAD_BUTTON_LEFT || PAD_ButtonsDown(0) & PAD_BUTTON_DOWN) MenuOption++;
+		if (wd & WPAD_BUTTON_RIGHT || gd & PAD_BUTTON_UP) MenuOption--;
+		if (wd & WPAD_BUTTON_LEFT || gd & PAD_BUTTON_DOWN) MenuOption++;
 		if(MenuOption < 1) MenuOption = 5; if(MenuOption > 5) MenuOption = 1;
 
 		if (WPAD_ButtonsDown(0) & MENU_HOME_BITS || PAD_ButtonsDown(0) & PAD_BUTTON_START)
@@ -967,11 +1149,11 @@ void Menu()
 		{
 			switch(MenuOption)
 			{
-				case 2:	//Cycle cartridge category: Wiimote 1/-/B = back, 2/+/A = forward; Classic -/B = back, +/A = forward; GC L = back, R = forward
+				case 2:	//Cycle cartridge category: Wiimote 1/-/B = back, 2/+/A = forward; Classic -/B = back, +/A = forward; GC L/B = back, R/A = forward
 				{
 					u32 pd = PAD_ButtonsDown(0); //wd (outer scope) already carries the Wiimote's own buttons
-					int back    = (wd & (WPAD_BUTTON_1 | WPAD_BUTTON_MINUS | WPAD_BUTTON_B | WPAD_CLASSIC_BUTTON_MINUS | WPAD_CLASSIC_BUTTON_B)) || (pd & PAD_TRIGGER_L);
-					int forward = (wd & (WPAD_BUTTON_2 | WPAD_BUTTON_PLUS  | WPAD_BUTTON_A | WPAD_CLASSIC_BUTTON_PLUS  | WPAD_CLASSIC_BUTTON_A)) || (pd & PAD_TRIGGER_R);
+					int back    = (wd & (WPAD_BUTTON_1 | WPAD_BUTTON_MINUS | WPAD_BUTTON_B | WPAD_CLASSIC_BUTTON_MINUS | WPAD_CLASSIC_BUTTON_B)) || (pd & (PAD_TRIGGER_L | PAD_BUTTON_B));
+					int forward = (wd & (WPAD_BUTTON_2 | WPAD_BUTTON_PLUS  | WPAD_BUTTON_A | WPAD_CLASSIC_BUTTON_PLUS  | WPAD_CLASSIC_BUTTON_A)) || (pd & (PAD_TRIGGER_R | PAD_BUTTON_A));
 					if(back)         { currentCategory = (Category)((currentCategory + CAT_COUNT - 1) % CAT_COUNT); i = 0; }
 					else if(forward) { currentCategory = (Category)((currentCategory + 1) % CAT_COUNT); i = 0; }
 				}
@@ -979,7 +1161,7 @@ void Menu()
 				case 3: //Settings (shares the pause menu's option pages)
 					settingsFromTitle = 1; previewLoad();
 					pauseMenu[0] = 0; pauseMenu[1] = 2; //option list, first row
-				break;
+					continue; //otherwise the title screen below still draws+presents once more before the loop notices settingsFromTitle next iteration -- a stray extra frame that flashes back in behind Settings
 				case 4: //Exit!
 					menuRelease(&pdirSD, &pdirUSB, &romlocSD, &romlocUSB);
 					GRRLIB_Exit(); GRRLIB_FreeTexture(splash);
@@ -992,7 +1174,14 @@ void Menu()
 				{
 					turnOn = 1;
 					savedCategory = currentCategory; savedBrowse = i; //remember the position for next time
-					if (WPAD_ButtonsDown(0) & ~0x00000F80)
+					/* Check the GC pad FIRST and directly (same mask as the outer trigger
+					 * check above, 0x100F) rather than inferring "must be GC" from the
+					 * Wiimote's silence: WPAD_ButtonsDown(0) can be non-zero on the very
+					 * same frame a GC button confirms (stale/ghost Wiimote state), and the
+					 * old `else joystick = JOY_GC` fallback let that misattribute a real GC
+					 * confirm to Wii. */
+					if (PAD_ButtonsDown(0) & ~0x100F) joystick = JOY_GC;
+					else
 					{
 						//Whichever expansion is on the Wiimote right now becomes the default scheme
 						u32 expType = WPAD_EXP_NONE;
@@ -1001,7 +1190,6 @@ void Menu()
 						else if (expType == WPAD_EXP_CLASSIC) joystick = JOY_CLASSIC;
 						else joystick = JOY_WII;
 					}
-					else joystick = JOY_GC;
 
 					if (currentCategory == CAT_NA)
 					{
@@ -1051,6 +1239,12 @@ void Menu()
 						//Demos never had overlays; a NULL here just means "no overlay"
 						overlay = (tbl[i].overlay != NULL) ? GRRLIB_LoadTexture(tbl[i].overlay) : NULL;
 					}
+
+					//turnOn can have been reset to 0 above (missing file, empty category) -- only
+					//skip ahead if we're actually launching, same reasoning as the Settings continue
+					//above: otherwise the title screen redraws+presents itself once more right as
+					//the loop is about to exit, a stray extra frame behind the game starting.
+					if(turnOn) continue;
 				}
 				break;
 			}
@@ -1146,7 +1340,7 @@ void PauseMenu()
 	
 	WPAD_ScanPads();
 	u32 padConnected = PAD_ScanPads();
-	int gcConnected = (padConnected & PAD_CHAN0_BIT) != 0;
+	int gcConnected = (padConnected & PAD_CHAN0_CONNECTED) != 0;
 
 	//What's plugged into the Wiimote's extension port right now, if anything
 	u32 expType = WPAD_EXP_NONE;
@@ -1166,13 +1360,15 @@ void PauseMenu()
 	         (joystick == JOY_GC && !gcConnected))
 		joystick = JOY_WII;
 
-	//Wiimote D-pad plus a synthesised equivalent from the Nunchuk/Classic stick
+	//Wiimote D-pad plus a synthesised equivalent from the Nunchuk/Classic stick and D-pad
 	u32 wd = WPAD_ButtonsDown(0) | expansionMenuButtonsDown();
+	//GC's own D-pad plus a synthesised equivalent from its control stick
+	u32 gd = PAD_ButtonsDown(0) | gcMenuButtonsDown();
 
-	if (wd & WPAD_BUTTON_RIGHT || PAD_ButtonsDown(0) & PAD_BUTTON_UP) input = 1;
-	if (wd & WPAD_BUTTON_LEFT || PAD_ButtonsDown(0) & PAD_BUTTON_DOWN) input = 2;
-	if (wd & WPAD_BUTTON_UP || PAD_ButtonsDown(0) & PAD_BUTTON_LEFT) input = 3;
-	if (wd & WPAD_BUTTON_DOWN || PAD_ButtonsDown(0) & PAD_BUTTON_RIGHT) input = 4;
+	if (wd & WPAD_BUTTON_RIGHT || gd & PAD_BUTTON_UP) input = 1;
+	if (wd & WPAD_BUTTON_LEFT || gd & PAD_BUTTON_DOWN) input = 2;
+	if (wd & WPAD_BUTTON_UP || gd & PAD_BUTTON_LEFT) input = 3;
+	if (wd & WPAD_BUTTON_DOWN || gd & PAD_BUTTON_RIGHT) input = 4;
 	if (WPAD_ButtonsDown(0) & ~MENU_RESERVED_BITS || PAD_ButtonsDown(0) & ~0x100F) input = 5;
 	if (WPAD_ButtonsDown(0) & MENU_HOME_BITS || PAD_ButtonsDown(0) & PAD_BUTTON_START) input = 6;
 
@@ -1183,12 +1379,20 @@ void PauseMenu()
 	//"Held" must exclude the very frame the button went down -- ButtonsHeld is
 	//already true on that first frame -- or a tap of A can never confirm
 	//anything here: it gets swallowed into peek mode before `input` is acted on.
+	//Edit Controls must never peek-hide: it works by capturing whichever physical
+	//button the player presses (including A itself, held for even a couple of
+	//frames while confirming a row or assigning a slot), so this would otherwise
+	//blank the whole page in and out on every press -- a rapid, unpleasant flash
+	//that's worse than the glow it's next to, not just off-brand for a menu.
 	{
-		u8 peekA = (WPAD_ButtonsHeld(0) & WPAD_BUTTON_A) && !(WPAD_ButtonsDown(0) & WPAD_BUTTON_A);
-		u8 peekR = (PAD_ButtonsHeld(0) & PAD_TRIGGER_R) && !(PAD_ButtonsDown(0) & PAD_TRIGGER_R);
-	if(settingsFromTitle || (!peekR && !peekA))
+		u8 heldA = (WPAD_ButtonsHeld(0) & WPAD_BUTTON_A) != 0;
+		u8 heldR = (PAD_ButtonsHeld(0) & PAD_TRIGGER_R) != 0;
+		if(suppressPeek && !heldA && !heldR) suppressPeek = 0; //both released at least once since Done -- safe to resume normal peeking
+		u8 peekA = !suppressPeek && heldA && !(WPAD_ButtonsDown(0) & WPAD_BUTTON_A);
+		u8 peekR = !suppressPeek && heldR && !(PAD_ButtonsDown(0) & PAD_TRIGGER_R);
+	if(settingsFromTitle || pauseMenu[0] == 7 || (!peekR && !peekA))
 	{
-		GRRLIB_Rectangle(0, 160, rmode->fbWidth, 160, 0x000000D0, 1);
+		GRRLIB_Rectangle(0, 160, rmode->fbWidth, 185, 0x000000D0, 1); //tall enough for all 8 rows, incl. "Turn vectrex OFF"/"Back" at y=306
 
 		switch(pauseMenu[0]){
 			case 2: //Overlay
@@ -1316,6 +1520,94 @@ void PauseMenu()
 				GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2, 240, myFont, "[                  ]", FONTOPT, 0xFFFFFFFF);
 				GRRLIB_Rectangle( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2 + GRRLIB_WidthTTF(myFont, "[", FONTOPT) , 253, (GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6) * optScreenSize / 255 , 7, 0xFFFFFFFF, 1);
 			break;
+			case 7: //Edit Controls
+			{
+				u8 slot = pauseMenu[1]; //1-4, which Vectrex button is being viewed/edited (kept even while onDone, so Up returns to the right one)
+				u32 *map = schemeButtonMap(joystick);
+
+			//Process input
+				if(!remapWaiting){
+					if(input) warnUnmapped = 0; //any fresh input dismisses the warning so editing isn't blocked
+
+					if(!onDone){
+						//slots are laid out left-to-right in the diagram, so cycling them is Left/Right (input 3/4), not Up/Down
+						if(input == 3) pauseMenu[1]--; if(input == 4) pauseMenu[1]++;
+						if(pauseMenu[1] < 1) pauseMenu[1] = 4; if(pauseMenu[1] > 4) pauseMenu[1] = 1;
+						slot = pauseMenu[1];
+
+						if(input == 2) onDone = 1; //Down off the slot row onto Done
+						if(input == 5) { remapWaiting = 1; remapFlashOn = 1; remapFlashT0 = gettime(); }
+					} else {
+						if(input == 1) onDone = 0; //Up back onto the slot row
+					}
+
+					if(input == 6 || (onDone && input == 5)){ //Home/Start, or confirming Done
+						int mi, allMapped = 1;
+						for(mi = 0; mi < 4; mi++) if(map[mi] == 0) allMapped = 0;
+						if(allMapped) { controlsFree(); onDone = 0; suppressPeek = 1; pauseMenu[1] = pauseMenu[0] + 1; pauseMenu[0] = 0; }
+						else warnUnmapped = 1;
+					}
+				} else {
+					u32 mask = (joystick == JOY_GC) ? REMAP_GC_MASK : (joystick == JOY_NUNCHUK) ? REMAP_NUNCHUK_MASK : (joystick == JOY_CLASSIC) ? REMAP_CLASSIC_MASK : REMAP_WII_MASK;
+					u32 raw  = (joystick == JOY_GC) ? PAD_ButtonsDown(0) : WPAD_ButtonsDown(0);
+					u32 pressed = raw & mask;
+					pressed &= (0 - pressed); //isolate one bit, in case several land on the same frame
+
+					if(pressed){
+						int i;
+						for(i = 0; i < 4; i++) if(i != slot - 1 && map[i] == pressed) map[i] = 0; //no two Vectrex buttons share one physical button
+						map[slot - 1] = pressed;
+						remapWaiting = 0;
+					} else if(input == 6) {
+						remapWaiting = 0; //cancel without assigning
+					}
+
+					//slow on/off flash, deliberately not fast enough to bother anyone sensitive to it
+					if(ticks_to_millisecs(gettime() - remapFlashT0) >= 500) { remapFlashOn ^= 1; remapFlashT0 = gettime(); }
+				}
+
+			//Draw -- this page gets its own box, sized and centred for its own content
+			//(diagram + Done + hint line) rather than reusing the shared one above, which
+			//is sized for the plain option rows and would leave this content off-centre.
+			//Gated on pauseMenu[0] still being 7: confirming Done above can jump it back
+			//to 0 for the main menu, but this whole case body keeps running for the rest
+			//of the frame regardless -- without this check the hint line briefly redraws
+			//with the just-reset onDone/warnUnmapped state, flashing "Press any button to
+			//remap" back up for one frame on the way out.
+				if(pauseMenu[0] == 7){
+					GRRLIB_Rectangle(0, 42, rmode->fbWidth, 438 - 42, 0x000000D0, 1); //42-438 is centred on the screen's midline (240)
+					PrintCenteredTTF(50, "Edit Controls", FONTHEAD, 0x228B22FF);
+					{
+						f32 s = 0.8f;
+						int imgX = (int)((rmode->fbWidth - 450 * s) / 2);
+						int imgY = 110;
+						u8 showGlow = !onDone && (!remapWaiting || remapFlashOn);
+						GRRLIB_texImg *img = showGlow ? btnmapSelect[slot - 1] : btnmapBase;
+						static const int cx[4] = {187, 256, 325, 394}; //circle centers in the 450x250 source image (canvas is padded to 452x252 for GX 4x4 tile alignment, art itself is unchanged)
+						int b;
+
+						if(img != NULL) GRRLIB_DrawImg(imgX, imgY, img, 0, s, s, 0xFFFFFFFF);
+
+						for(b = 0; b < 4; b++){
+							const char *label = (remapWaiting && !onDone && b == slot - 1) ? "" : buttonLabel(joystick, map[b]);
+							if(label[0] != '\0'){
+								//+2 is an empirical nudge: the ink-centring math checks out exactly against
+								//both GRRLIB's own draw formula and the real font's glyph metrics, but it
+								//still renders a couple of px left of centre in practice -- reported directly
+								//against the in-game render, so correcting for it here rather than the math.
+								int tx = imgX + (int)(cx[b] * s) + 2, ty = imgY + (int)(125 * s);
+								PrintInkCenteredAt(tx, ty, label, FONTOPT, 0x228B22FF);
+							}
+						}
+					}
+					PrintCenteredTTF(330, "Done", FONTOPT, onDone ? 0xFFFFFFFF : 0x228B22FF);
+
+					if(remapWaiting) PrintCenteredTTF(375, "Press any button...", FONTOPT, 0xFFFFFFFF);
+					else if(warnUnmapped) PrintCenteredTTF(375, "Not all buttons are mapped!", FONTOPT, 0xFF3030FF);
+					else if(!onDone) PrintCenteredTTF(375, "Press any button to remap", FONTOPT, 0xFFFFFFFF);
+				}
+			}
+			break;
 			default: //Main pause menu
 
 			//Input processing
@@ -1326,8 +1618,8 @@ void PauseMenu()
 					 * here at 1 after closing a sub-page must clamp, not jump.
 					 */
 					u8 lo = settingsFromTitle ? 2 : 1;
-					if(pauseMenu[1] < lo) pauseMenu[1] = (input == 1) ? 8 : lo;
-					if(pauseMenu[1] > 8) pauseMenu[1] = lo;
+					if(pauseMenu[1] < lo) pauseMenu[1] = (input == 1) ? 9 : lo;
+					if(pauseMenu[1] > 9) pauseMenu[1] = lo;
 				}
 
 				if(input == 3 || input == 4){
@@ -1349,7 +1641,8 @@ void PauseMenu()
 						case 5:	pauseMenu[0] = 4; break;
 						case 6: pauseMenu[0] = 5; break;
 						case 7: pauseMenu[0] = 6; break;
-						case 8: if(settingsFromTitle) { settingsFromTitle = 0; previewFree(); } else emustatus = 0; break;
+						case 8: pauseMenu[0] = 7; remapWaiting = 0; warnUnmapped = 0; onDone = 0; controlsLoad(); break;
+						case 9: if(settingsFromTitle) { settingsFromTitle = 0; previewFree(); } else emustatus = 0; break;
 					}
 					 pauseMenu[1] = 1; //sub-pages use this as their own cursor
 				}
@@ -1368,8 +1661,9 @@ void PauseMenu()
 				GRRLIB_PrintfTTF( MenuOffsets[2], 230, myFont,"Glow", FONTOPT,0xFFFFFFFF);
 				GRRLIB_PrintfTTF( MenuOffsets[2], 248, myFont,"Persistence", FONTOPT,0xFFFFFFFF);
 				GRRLIB_PrintfTTF( MenuOffsets[2], 266, myFont,"Screen Size", FONTOPT,0xFFFFFFFF);
-				if(settingsFromTitle) PrintCenteredTTF(288, "Back", FONTHEAD, 0xFF0000FF);
-				else GRRLIB_PrintfTTF( MenuOffsets[1], 288, myFont,"Turn vectrex OFF", FONTHEAD,0xFF0000FF);
+				PrintCenteredTTF(284, "Edit Controls", FONTHEAD, 0x228B22FF); //an action row like Resume/Settings and Turn Off/Back, not a toggle like its neighbours -- styled to match them
+				if(settingsFromTitle) PrintCenteredTTF(306, "Back", FONTHEAD, 0xFF0000FF);
+				else GRRLIB_PrintfTTF( MenuOffsets[1], 306, myFont,"Turn vectrex OFF", FONTHEAD,0xFF0000FF);
 
 				if (joystick == JOY_WII) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 176, myFont,"[Wii]", FONTOPT, 0xADFF2FFF);
 				else if (joystick == JOY_NUNCHUK) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 176, myFont,"[Nunchuk]", FONTOPT, 0xADFF2FFF);
@@ -1401,7 +1695,8 @@ void PauseMenu()
 				else if(pauseMenu[1] == 5) GRRLIB_PrintfTTF(MenuOffsets[2]-MenuOffsets[4], 230, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
 				else if(pauseMenu[1] == 6) GRRLIB_PrintfTTF(MenuOffsets[2]-MenuOffsets[4], 248, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
 				else if(pauseMenu[1] == 7) GRRLIB_PrintfTTF(MenuOffsets[2]-MenuOffsets[4], 266, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
-				else GRRLIB_PrintfTTF(MenuOffsets[1]-MenuOffsets[4], 288, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
+				else if(pauseMenu[1] == 8) GRRLIB_PrintfTTF(centerXTTF("Edit Controls", FONTHEAD)-MenuOffsets[4], 284, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
+				else GRRLIB_PrintfTTF(MenuOffsets[1]-MenuOffsets[4], 306, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
 
 			break;
 		}
