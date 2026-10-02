@@ -167,8 +167,7 @@ static f32 aspectCorrection = 1.0f;
 
 static short snd_ring[SND_RING_SIZE];
 static volatile u32 snd_widx, snd_ridx;
-//rotating aligned DMA buffers: one playing, one queued, rest free
-static short *snd_chunk[SND_NCHUNKS];
+static short *snd_chunk[SND_NCHUNKS]; //rotating aligned DMA buffers: one playing, one queued, rest free
 static int snd_chunk_idx;
 static volatile u8 snd_running;
 static volatile u32 snd_underruns;
@@ -207,8 +206,7 @@ static short* snd_fill_chunk(){
 	for (i = 0; i < SND_CHUNK_SAMPLES; i++)
 		buf[i] = snd_ring[(snd_ridx + i) & (SND_RING_SIZE - 1)];
 
-	//ASND reads via DMA, not through the CPU cache
-	DCFlushRange(buf, SND_CHUNK_SAMPLES * sizeof(short));
+	DCFlushRange(buf, SND_CHUNK_SAMPLES * sizeof(short)); //ASND reads via DMA, not through the CPU cache
 	return buf;
 }
 
@@ -231,10 +229,7 @@ static void snd_voice_cb(s32 voice){
 			snd_commit_chunk();
 
 			//timestamp the pull for the wall-clock rate measurement
-			if (snd_run_reset) {
-				snd_run_pulls = 0;
-				snd_run_reset = 0;
-			}
+			if (snd_run_reset) { snd_run_pulls = 0; snd_run_reset = 0; }
 			if (snd_run_pulls == 0) snd_run_t0 = now;
 			snd_run_tlast = now;
 			snd_run_pulls++;
@@ -278,8 +273,7 @@ static void sound_stop(){
 #endif
 }
 
-//Drains whatever psg_run() built up this tick into the ring;
-//the interrupt callback does the feeding
+//Drains whatever psg_run() built up this tick into the ring; the interrupt callback does the feeding
 static void osint_playaudio(){
 #ifndef DISABLE_SOUND
 	static short tickbuf[PSG_MAX_SAMPLES];
@@ -297,12 +291,7 @@ static void osint_playaudio(){
 			 * re-read until the pull count is stable around them (u64 reads
 			 * are not atomic on this cpu).
 			 */
-			do {
-				p1 = snd_run_pulls;
-				t0 = snd_run_t0;
-				tl = snd_run_tlast;
-				p2 = snd_run_pulls;
-			} while (p1 != p2);
+			do { p1 = snd_run_pulls; t0 = snd_run_t0; tl = snd_run_tlast; p2 = snd_run_pulls; } while (p1 != p2);
 
 			{
 				u32 ms = (u32) ticks_to_millisecs(tl - t0);
@@ -322,8 +311,7 @@ static void osint_playaudio(){
 						 * (drops). one 0.2% step per measurement toward the
 						 * prebuffer target, +-1 chunk deadband via int division.
 						 */
-						level_err = ((int) backlog - SND_PREBUFFER * SND_CHUNK_SAMPLES)
-						            / SND_CHUNK_SAMPLES;
+						level_err = ((int) backlog - SND_PREBUFFER * SND_CHUNK_SAMPLES) / SND_CHUNK_SAMPLES;
 						if (level_err > 0) snd_rate_delta += 1;      /* too full: produce less */
 						else if (level_err < 0) snd_rate_delta -= 1; /* too empty: produce more */
 					}
@@ -338,10 +326,7 @@ static void osint_playaudio(){
 		psg_rate_trim(snd_rate_delta);
 	}
 
-	if (n > (int) space) {
-		snd_drops += n - space;
-		n = (int) space;
-	}
+	if (n > (int) space) { snd_drops += n - space; n = (int) space; }
 
 	for (i = 0; i < n; i++)
 		snd_ring[(snd_widx + i) & (SND_RING_SIZE - 1)] = tickbuf[i];
@@ -352,8 +337,7 @@ static void osint_playaudio(){
 		snd_run_pulls = 0; //fresh measurement run (the voice isn't live yet, no irq race)
 		snd_run_reset = 0;
 		snd_running = 1; //set before SetVoice so an immediate callback isn't ignored
-		if (ASND_SetVoice(0, VOICE_MONO_16BIT, PSG_SAMPLE_RATE, 0, buf,
-		                  SND_CHUNK_SAMPLES * sizeof(short), 255, 255, snd_voice_cb) == SND_OK)
+		if (ASND_SetVoice(0, VOICE_MONO_16BIT, PSG_SAMPLE_RATE, 0, buf, SND_CHUNK_SAMPLES * sizeof(short), 255, 255, snd_voice_cb) == SND_OK)
 			snd_commit_chunk();
 		else
 			snd_running = 0; //couldn't start; retry next tick
@@ -363,166 +347,112 @@ static void osint_playaudio(){
 
 // The drawing area for vectors is 358x445 starting at (offx, offy)
 void osint_render(){
-	u32 i, j, v, c;
+u32 i, j, v, c;
 
-	//frame-skipped to keep audio real-time; the beam's vectors are swapped by the caller regardless
-	if (!renderThisFrame) return;
+if(!renderThisFrame) return; //frame-skipped to keep audio real-time; the beam's vectors are swapped by the caller regardless
 
-	if (optVtxCustomColor[0])
-		c = RGBA(optVtxCustomColor[1], optVtxCustomColor[2], optVtxCustomColor[3], 255);
-	else
-		c = (vectors_draw[0].color * 256 / VECTREX_COLORS * 0x1010100) + 0xFF;
+if (optVtxCustomColor[0]) c = RGBA(optVtxCustomColor[1], optVtxCustomColor[2], optVtxCustomColor[3], 255);
+else c = (vectors_draw[0].color * 256 / VECTREX_COLORS*0x1010100)+0xFF;
 
-	//Free the current position pointer, which is the oldest frame
-	if (persFull) free(vectors_pers[persCycle]);
+		if(persFull) free(vectors_pers[persCycle]); //Free the current position pointer, which is the oldest frame
 
-	//allocate memory to hold the coordinates of every vector in the current frame
-	vectors_pers[persCycle] = (wii_vector_t *)malloc(sizeof(wii_vector_t) * vector_draw_cnt);
-	//out of memory: drop the frame rather than write through NULL
-	if (vectors_pers[persCycle] == NULL) {
-		vector_pers_cnt[persCycle] = 0;
-		return;
-	}
-	//Remember the number of vectors drawn at this frame
-	vector_pers_cnt[persCycle] = vector_draw_cnt;
+		vectors_pers[persCycle] = (wii_vector_t*) malloc (sizeof(wii_vector_t)*vector_draw_cnt); //allocate memory to hold the coordinates of every vector in the current frame
+		if(vectors_pers[persCycle] == NULL){ vector_pers_cnt[persCycle] = 0; return; } //out of memory: drop the frame rather than write through NULL
+		vector_pers_cnt[persCycle] = vector_draw_cnt; //Remember the number of vectors drawn at this frame
 
-	//Store the coordinates of the current frame in the persistence array
-	//These are used from now (to avoid computing them again), scaled for overscan
-	{
-		f32 s = optScreenSize / 255.0f;
-		for (v = 0; v < vector_draw_cnt; v++) {
-			vectors_pers[persCycle][v].x0 = SCALE_X(offx + vectors_draw[v].x0 / scl_factor, s);
-			vectors_pers[persCycle][v].y0 = SCALE_Y(offy + vectors_draw[v].y0 / scl_factor, s);
-			vectors_pers[persCycle][v].x1 = SCALE_X(offx + vectors_draw[v].x1 / scl_factor, s);
-			vectors_pers[persCycle][v].y1 = SCALE_Y(offy + vectors_draw[v].y1 / scl_factor, s);
-		}
-	}
-
-	//This draws the old vectors [persistence]
-	if (optPersistence[0] && persFull)
-		for (i = 1; i <= optPersistence[1]; i++) {
-			j = (persCycle >= i ? persCycle - i : PERSFRAMES - i + persCycle + 1);
-			for (v = 0; v < vector_pers_cnt[j]; v++) {
-				vbatch_point(vectors_pers[j][v].x0, vectors_pers[j][v].y0,
-				             RGBA(optPersistence[2], optPersistence[2], optPersistence[2],
-				                  optPersistence[3]));
-				vbatch_line(vectors_pers[j][v].x0, vectors_pers[j][v].y0,
-				            vectors_pers[j][v].x1, vectors_pers[j][v].y1,
-				            RGBA(optPersistence[2], optPersistence[2], optPersistence[2],
-				                 optPersistence[3]));
+		//Store the coordinates of the current frame in the persistence array
+		//These are used from now (to avoid computing them again), scaled for overscan
+		{
+			f32 s = optScreenSize / 255.0f;
+			for(v = 0; v < vector_draw_cnt; v++){
+					vectors_pers[persCycle][v].x0 = SCALE_X(offx + vectors_draw[v].x0 / scl_factor, s);
+					vectors_pers[persCycle][v].y0 = SCALE_Y(offy + vectors_draw[v].y0 / scl_factor, s);
+					vectors_pers[persCycle][v].x1 = SCALE_X(offx + vectors_draw[v].x1 / scl_factor, s);
+					vectors_pers[persCycle][v].y1 = SCALE_Y(offy + vectors_draw[v].y1 / scl_factor, s);
 			}
 		}
-	vbatch_flush(); //must land under the persistence pass's blend mode before it changes below
 
-	//Blurred vectors to give a glowing effect
-	if (optGlow[0]) {
-		//same colour as the vectors, glow-opacity alpha instead of opaque
-		u32 glowc = (c & 0xFFFFFF00) | optGlow[2];
-		GRRLIB_SetBlend(GRRLIB_BLEND_ADD);
-		for (v = 0; v < vector_draw_cnt; v++) {
-			blurDot(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0,
-			        optGlow[1] / 7 + 2, optGlow[1], glowc);
-			blurDot(vectors_pers[persCycle][v].x1, vectors_pers[persCycle][v].y1,
-			        optGlow[1] / 7 + 2, optGlow[1], glowc);
-			blurLine(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0,
-			         vectors_pers[persCycle][v].x1, vectors_pers[persCycle][v].y1,
-			         optGlow[1], glowc);
+		//This draws the old vectors [persistence]
+		if(optPersistence[0] && persFull)
+			for(i = 1; i <= optPersistence[1]; i++){
+			j = (persCycle >= i ? persCycle - i : PERSFRAMES - i + persCycle + 1);
+				for(v = 0; v < vector_pers_cnt[j]; v++){
+					vbatch_point(vectors_pers[j][v].x0, vectors_pers[j][v].y0, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], optPersistence[3]));
+					vbatch_line(vectors_pers[j][v].x0, vectors_pers[j][v].y0, vectors_pers[j][v].x1, vectors_pers[j][v].y1, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], optPersistence[3]));
+				}
+			}
+		vbatch_flush(); //must land under the persistence pass's blend mode before it changes below
+
+		//Blurred vectors to give a glowing effect
+		if(optGlow[0]){
+			u32 glowc = (c & 0xFFFFFF00) | optGlow[2]; //same colour as the vectors, glow-opacity alpha instead of opaque
+			GRRLIB_SetBlend(GRRLIB_BLEND_ADD);
+			for(v = 0; v < vector_draw_cnt; v++){
+				blurDot(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0, optGlow[1]/7 + 2, optGlow[1], glowc);
+				blurDot(vectors_pers[persCycle][v].x1, vectors_pers[persCycle][v].y1, optGlow[1]/7 + 2, optGlow[1], glowc);
+				blurLine(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0, vectors_pers[persCycle][v].x1, vectors_pers[persCycle][v].y1, optGlow[1], glowc);
+			}
+			vbatch_flush(); //must land under GRRLIB_BLEND_ADD before it's switched back below
+			GRRLIB_SetBlend(GRRLIB_BLEND_ALPHA);
 		}
-		vbatch_flush(); //must land under GRRLIB_BLEND_ADD before it's switched back below
-		GRRLIB_SetBlend(GRRLIB_BLEND_ALPHA);
-	}
 
-	//Draw the current vectors normally
-	for (v = 0; v < vector_draw_cnt; v++) {
-		vbatch_point(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0, c);
-		vbatch_line(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0,
-		            vectors_pers[persCycle][v].x1, vectors_pers[persCycle][v].y1, c);
-	}
-	vbatch_flush();
+		//Draw the current vectors normally
+		for(v = 0; v < vector_draw_cnt; v++){
+			vbatch_point(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0, c);
+			vbatch_line(vectors_pers[persCycle][v].x0, vectors_pers[persCycle][v].y0, vectors_pers[persCycle][v].x1, vectors_pers[persCycle][v].y1, c);
+		}
+		vbatch_flush();
 
-	//wrap around and set the flag to start freeing old data
-	if (++persCycle > PERSFRAMES) {
-		persCycle = 0;
-		persFull = 1;
-	}
+		if (++persCycle > PERSFRAMES) {persCycle = 0; persFull = 1;} //wrap around and set the flag to start freeing old data
 
-	{
-		f32 s = optScreenSize / 255.0f;
-		if (overlay != NULL && optOverlay[0])
-			GRRLIB_DrawImg(SCR_CX + (OVL_X - SCR_CX) * s * aspectCorrection,
-			               SCR_CY + (OVL_Y - SCR_CY) * s,
-			               overlay, 0, s * aspectCorrection, s, 0xFFFFFF00 + optOverlay[1]);
-		else
-			GRRLIB_Rectangle(SCALE_X(offx, s), SCALE_Y(offy, s),
-			                 358.0f * s * aspectCorrection, 445.0f * s, c, 0);
-	}
+		{
+			f32 s = optScreenSize / 255.0f;
+			if(overlay != NULL && optOverlay[0]) GRRLIB_DrawImg(SCR_CX + (OVL_X - SCR_CX) * s * aspectCorrection, SCR_CY + (OVL_Y - SCR_CY) * s, overlay, 0, s * aspectCorrection, s, 0xFFFFFF00+optOverlay[1]);
+			else GRRLIB_Rectangle(SCALE_X(offx, s), SCALE_Y(offy, s), 358.0f * s * aspectCorrection, 445.0f * s, c, 0);
+		}
 
 	GRRLIB_Render();
 }
 
 //Render the screen as it was when the emulator was paused
 void pause_render(){
-	u32 i, j, v, c;
-	f32 s = optScreenSize / 255.0f;
+u32 i, j, v, c;
+f32 s = optScreenSize / 255.0f;
 
-	if (optVtxCustomColor[0])
-		c = RGBA(optVtxCustomColor[1], optVtxCustomColor[2], optVtxCustomColor[3], 255);
-	else
-		c = (vectors_erse[0].color * 256 / VECTREX_COLORS * 0x1010100) + 0xFF;
+	if (optVtxCustomColor[0]) c = RGBA(optVtxCustomColor[1], optVtxCustomColor[2], optVtxCustomColor[3], 255);
+	else c = (vectors_erse[0].color * 256 / VECTREX_COLORS*0x1010100)+0xFF;
 
-	if (optPersistence[0] && persFull)
-		for (i = 2; i <= optPersistence[1] + 1; i++) {
+		if(optPersistence[0] && persFull)
+			for(i = 2; i <= optPersistence[1] + 1; i++){
 			j = (persCycle >= i ? persCycle - i : PERSFRAMES - i + persCycle + 1);
-			for (v = 0; v < vector_pers_cnt[j]; v++) {
-				vbatch_point(vectors_pers[j][v].x0, vectors_pers[j][v].y0,
-				             RGBA(optPersistence[2], optPersistence[2], optPersistence[2],
-				                  optPersistence[3]));
-				vbatch_line(vectors_pers[j][v].x0, vectors_pers[j][v].y0,
-				            vectors_pers[j][v].x1, vectors_pers[j][v].y1,
-				            RGBA(optPersistence[2], optPersistence[2], optPersistence[2],
-				                 optPersistence[3]));
+				for(v = 0; v < vector_pers_cnt[j]; v++){
+					vbatch_point(vectors_pers[j][v].x0, vectors_pers[j][v].y0, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], optPersistence[3]));
+					vbatch_line(vectors_pers[j][v].x0, vectors_pers[j][v].y0, vectors_pers[j][v].x1, vectors_pers[j][v].y1, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], optPersistence[3]));
+				}
 			}
+		vbatch_flush(); //must land under the persistence pass's blend mode before it changes below
+
+		if(optGlow[0]){
+			u32 glowc = (c & 0xFFFFFF00) | optGlow[2]; //same colour as the vectors, glow-opacity alpha instead of opaque
+			GRRLIB_SetBlend(GRRLIB_BLEND_ADD);
+			for(v = 0; v < vector_erse_cnt; v++){
+				blurDot(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s), optGlow[1]/7 + 2, optGlow[1], glowc);
+				blurDot(SCALE_X(offx + vectors_erse[v].x1 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y1 / scl_factor, s), optGlow[1]/7 + 2, optGlow[1], glowc);
+				blurLine(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s), SCALE_X(offx + vectors_erse[v].x1 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y1 / scl_factor, s), optGlow[1], glowc);
+			}
+			vbatch_flush(); //must land under GRRLIB_BLEND_ADD before it's switched back below
+			GRRLIB_SetBlend(GRRLIB_BLEND_ALPHA);
 		}
-	vbatch_flush(); //must land under the persistence pass's blend mode before it changes below
 
-	if (optGlow[0]) {
-		//same colour as the vectors, glow-opacity alpha instead of opaque
-		u32 glowc = (c & 0xFFFFFF00) | optGlow[2];
-		GRRLIB_SetBlend(GRRLIB_BLEND_ADD);
-		for (v = 0; v < vector_erse_cnt; v++) {
-			blurDot(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s),
-			        SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s),
-			        optGlow[1] / 7 + 2, optGlow[1], glowc);
-			blurDot(SCALE_X(offx + vectors_erse[v].x1 / scl_factor, s),
-			        SCALE_Y(offy + vectors_erse[v].y1 / scl_factor, s),
-			        optGlow[1] / 7 + 2, optGlow[1], glowc);
-			blurLine(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s),
-			         SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s),
-			         SCALE_X(offx + vectors_erse[v].x1 / scl_factor, s),
-			         SCALE_Y(offy + vectors_erse[v].y1 / scl_factor, s),
-			         optGlow[1], glowc);
+		for(v = 0; v < vector_erse_cnt; v++){
+			vbatch_point(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s), c);
+			vbatch_line(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s), SCALE_X(offx + vectors_erse[v].x1 / scl_factor, s), SCALE_Y(offy + vectors_erse[v].y1 / scl_factor, s), c);
 		}
-		vbatch_flush(); //must land under GRRLIB_BLEND_ADD before it's switched back below
-		GRRLIB_SetBlend(GRRLIB_BLEND_ALPHA);
-	}
+		vbatch_flush();
 
-	for (v = 0; v < vector_erse_cnt; v++) {
-		vbatch_point(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s),
-		             SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s), c);
-		vbatch_line(SCALE_X(offx + vectors_erse[v].x0 / scl_factor, s),
-		            SCALE_Y(offy + vectors_erse[v].y0 / scl_factor, s),
-		            SCALE_X(offx + vectors_erse[v].x1 / scl_factor, s),
-		            SCALE_Y(offy + vectors_erse[v].y1 / scl_factor, s), c);
-	}
-	vbatch_flush();
 
-	if (overlay != NULL && optOverlay[0])
-		GRRLIB_DrawImg(SCR_CX + (OVL_X - SCR_CX) * s * aspectCorrection,
-		               SCR_CY + (OVL_Y - SCR_CY) * s,
-		               overlay, 0, s * aspectCorrection, s, 0xFFFFFF00 + optOverlay[1]);
-	else
-		GRRLIB_Rectangle(SCALE_X(offx, s), SCALE_Y(offy, s),
-		                 358.0f * s * aspectCorrection, 445.0f * s, c, 0);
+		if(overlay != NULL && optOverlay[0]) GRRLIB_DrawImg(SCR_CX + (OVL_X - SCR_CX) * s * aspectCorrection, SCR_CY + (OVL_Y - SCR_CY) * s, overlay, 0, s * aspectCorrection, s, 0xFFFFFF00+optOverlay[1]);
+		else GRRLIB_Rectangle(SCALE_X(offx, s), SCALE_Y(offy, s), 358.0f * s * aspectCorrection, 445.0f * s, c, 0);
 }
 
 /* Backdrop for the options screen when it's opened from the title menu: there
@@ -532,20 +462,17 @@ void pause_render(){
  * is loaded. (Glow and persistence are motion effects and can't be shown on a
  * still, so they stay off here.) */
 static void preview_render(){
-	f32 s = optScreenSize / 255.0f;
-	f32 x = SCR_CX + (OVL_X - SCR_CX) * s * aspectCorrection, y = SCR_CY + (OVL_Y - SCR_CY) * s;
-	u32 c;
+f32 s = optScreenSize / 255.0f;
+f32 x = SCR_CX + (OVL_X - SCR_CX) * s * aspectCorrection, y = SCR_CY + (OVL_Y - SCR_CY) * s;
+u32 c;
 
 	//The still is white-on-black, so modulating it by the custom colour tints
 	//the vectors exactly as the live renderer would
-	if (optVtxCustomColor[0])
-		c = RGBA(optVtxCustomColor[1], optVtxCustomColor[2], optVtxCustomColor[3], 255);
-	else
-		c = 0xFFFFFFFF;
+	if (optVtxCustomColor[0]) c = RGBA(optVtxCustomColor[1], optVtxCustomColor[2], optVtxCustomColor[3], 255);
+	else c = 0xFFFFFFFF;
 
-	if (preview != NULL) GRRLIB_DrawImg(x, y, preview, 0, s * aspectCorrection, s, c);
-	if (previewOvl != NULL && optOverlay[0])
-		GRRLIB_DrawImg(x, y, previewOvl, 0, s * aspectCorrection, s, 0xFFFFFF00 + optOverlay[1]);
+	if(preview != NULL) GRRLIB_DrawImg(x, y, preview, 0, s * aspectCorrection, s, c);
+	if(previewOvl != NULL && optOverlay[0]) GRRLIB_DrawImg(x, y, previewOvl, 0, s * aspectCorrection, s, 0xFFFFFF00+optOverlay[1]);
 }
 
 static void previewLoad(){
@@ -553,14 +480,8 @@ static void previewLoad(){
 	if(previewOvl == NULL) previewOvl = GRRLIB_LoadTexture(Minestorm_png);
 }
 static void previewFree(){
-	if(preview != NULL) {
-		GRRLIB_FreeTexture(preview);
-		preview = NULL;
-	}
-	if(previewOvl != NULL) {
-		GRRLIB_FreeTexture(previewOvl);
-		previewOvl = NULL;
-	}
+	if(preview != NULL)    { GRRLIB_FreeTexture(preview);    preview = NULL; }
+	if(previewOvl != NULL) { GRRLIB_FreeTexture(previewOvl); previewOvl = NULL; }
 }
 
 /* ---- centred text -----------------------------------------------------
@@ -580,10 +501,7 @@ static int centerXAtTTF(const char *str, unsigned size, int targetX){
 		for (p = (const unsigned char *) str; *p != '\0'; p++) {
 			if (FT_Load_Char(face, *p, FT_LOAD_RENDER) != 0) continue;
 			if (face->glyph->bitmap.width > 0) {
-				if (!seen) {
-					first = pen + face->glyph->bitmap_left;
-					seen = 1;
-				}
+				if (!seen) { first = pen + face->glyph->bitmap_left; seen = 1; }
 				last = pen + face->glyph->bitmap_left + face->glyph->bitmap.width;
 			}
 			pen += face->glyph->advance.x >> 6;
@@ -620,14 +538,8 @@ static int centerYInkTTF(const char *str, unsigned size, int targetY){
 			if (face->glyph->bitmap.rows > 0) {
 				int relTop = (int) size - face->glyph->bitmap_top;
 				int relBottom = relTop + (int) face->glyph->bitmap.rows;
-				if (!seen) {
-					top = relTop;
-					bottom = relBottom;
-					seen = 1;
-				} else {
-					if (relTop < top) top = relTop;
-					if (relBottom > bottom) bottom = relBottom;
-				}
+				if (!seen) { top = relTop; bottom = relBottom; seen = 1; }
+				else { if (relTop < top) top = relTop; if (relBottom > bottom) bottom = relBottom; }
 			}
 		}
 
@@ -635,12 +547,9 @@ static int centerYInkTTF(const char *str, unsigned size, int targetY){
 	return targetY - (top + bottom) / 2;
 }
 
-//Centres a string on both axes around an arbitrary screen point (as opposed
-//to PrintCenteredTTF, which only centres horizontally and takes y as-is)
-static void PrintInkCenteredAt(int targetX, int targetY, const char *str, unsigned size,
-                               u32 color){
-	GRRLIB_PrintfTTF(centerXAtTTF(str, size, targetX), centerYInkTTF(str, size, targetY),
-	                 myFont, str, size, color);
+//Centres a string on both axes around an arbitrary screen point (as opposed to PrintCenteredTTF, which only centres horizontally and takes y as-is)
+static void PrintInkCenteredAt(int targetX, int targetY, const char *str, unsigned size, u32 color){
+	GRRLIB_PrintfTTF(centerXAtTTF(str, size, targetX), centerYInkTTF(str, size, targetY), myFont, str, size, color);
 }
 
 /* ROM titles come from the bundled catalogue AND from arbitrary SD filenames,
@@ -666,8 +575,7 @@ static void PrintRomTitle(int y, const char *str, f32 s){
 		unsigned floor = (unsigned)(20 * s);
 
 		lastS = s;
-		strncpy(src, str, sizeof(src) - 1);
-		src[sizeof(src) - 1] = '\0';
+		strncpy(src, str, sizeof(src) - 1); src[sizeof(src) - 1] = '\0';
 		strcpy(fitted, src);
 
 		size = (unsigned)(FONTROM * s + 0.5f);
@@ -716,11 +624,7 @@ static u8 axisToByte(u8 pos, u8 center, u8 lo, u8 hi){
 	 * stick no matter how far it's actually pushed. Falling back to the
 	 * Wii-standard symmetric centre/half-range keeps raw `pos` usable
 	 * instead of discarding it. */
-	if (center == 0 && lo == 0 && hi == 0) {
-		center = 0x80;
-		lo = 0x1E;
-		hi = 0xE2;
-	}
+	if (center == 0 && lo == 0 && hi == 0) { center = 0x80; lo = 0x1E; hi = 0xE2; }
 
 	diff = (int)pos - (int)center;
 	range = diff >= 0 ? (int)hi - (int)center : (int)center - (int)lo;
@@ -765,15 +669,11 @@ static u32 expansionMenuButtonsDown(){
 
 	WPAD_Expansion(0, &exp);
 	if (exp.type == WPAD_EXP_NUNCHUK) {
-		x = (int)axisToByte(exp.nunchuk.js.pos.x, exp.nunchuk.js.center.x,
-		                    exp.nunchuk.js.min.x, exp.nunchuk.js.max.x) - 0x80;
-		y = (int)axisToByte(exp.nunchuk.js.pos.y, exp.nunchuk.js.center.y,
-		                    exp.nunchuk.js.min.y, exp.nunchuk.js.max.y) - 0x80;
+		x = (int)axisToByte(exp.nunchuk.js.pos.x, exp.nunchuk.js.center.x, exp.nunchuk.js.min.x, exp.nunchuk.js.max.x) - 0x80;
+		y = (int)axisToByte(exp.nunchuk.js.pos.y, exp.nunchuk.js.center.y, exp.nunchuk.js.min.y, exp.nunchuk.js.max.y) - 0x80;
 	} else if (exp.type == WPAD_EXP_CLASSIC) {
-		x = (int)axisToByte(exp.classic.ljs.pos.x, exp.classic.ljs.center.x,
-		                    exp.classic.ljs.min.x, exp.classic.ljs.max.x) - 0x80;
-		y = (int)axisToByte(exp.classic.ljs.pos.y, exp.classic.ljs.center.y,
-		                    exp.classic.ljs.min.y, exp.classic.ljs.max.y) - 0x80;
+		x = (int)axisToByte(exp.classic.ljs.pos.x, exp.classic.ljs.center.x, exp.classic.ljs.min.x, exp.classic.ljs.max.x) - 0x80;
+		y = (int)axisToByte(exp.classic.ljs.pos.y, exp.classic.ljs.center.y, exp.classic.ljs.min.y, exp.classic.ljs.max.y) - 0x80;
 	}
 
 	/* The menu's WPAD_BUTTON_UP/DOWN/LEFT/RIGHT wiring (Menu()'s "Browse
@@ -785,22 +685,16 @@ static u32 expansionMenuButtonsDown(){
 	 * and real left/right needs WPAD_BUTTON_UP/DOWN. The Nunchuk/Classic
 	 * stick, in contrast, is read UNROTATED (Wiimote held upright, same as
 	 * its in-game reading) -- so it's crossed here on purpose, not a typo. */
-	/* out of +-127: past resting jitter, short of a deliberate push */
-	#define MENU_STICK_DEADZONE 32
-	isUp = x < -MENU_STICK_DEADZONE;
-	isDown = x > MENU_STICK_DEADZONE;
-	isRight = y > MENU_STICK_DEADZONE;
-	isLeft = y < -MENU_STICK_DEADZONE;
+	#define MENU_STICK_DEADZONE 32 /* out of +-127: past resting jitter, short of a deliberate push */
+	isUp = x < -MENU_STICK_DEADZONE; isDown = x > MENU_STICK_DEADZONE;
+	isRight = y > MENU_STICK_DEADZONE; isLeft = y < -MENU_STICK_DEADZONE;
 	#undef MENU_STICK_DEADZONE
 
 	if (isUp    && !wasUp)    down |= WPAD_BUTTON_UP;
 	if (isDown  && !wasDown)  down |= WPAD_BUTTON_DOWN;
 	if (isLeft  && !wasLeft)  down |= WPAD_BUTTON_LEFT;
 	if (isRight && !wasRight) down |= WPAD_BUTTON_RIGHT;
-	wasUp = isUp;
-	wasDown = isDown;
-	wasLeft = isLeft;
-	wasRight = isRight;
+	wasUp = isUp; wasDown = isDown; wasLeft = isLeft; wasRight = isRight;
 
 	if (exp.type == WPAD_EXP_CLASSIC) {
 		/* WPAD_ButtonsDown() is already edge-detected, unlike the stick
@@ -833,10 +727,7 @@ static u32 gcMenuButtonsDown(){
 	if (isDown  && !wasDown)  down |= PAD_BUTTON_DOWN;
 	if (isLeft  && !wasLeft)  down |= PAD_BUTTON_LEFT;
 	if (isRight && !wasRight) down |= PAD_BUTTON_RIGHT;
-	wasUp = isUp;
-	wasDown = isDown;
-	wasLeft = isLeft;
-	wasRight = isRight;
+	wasUp = isUp; wasDown = isDown; wasLeft = isLeft; wasRight = isRight;
 	return down;
 }
 #undef PAD_STICK_DEADZONE
@@ -849,11 +740,8 @@ static u32 gcMenuButtonsDown(){
  * Nunchuk has no digital D-pad or HOME of its own, and both expansions'
  * analog sticks arrive pre-shaped as WPAD_BUTTON_* bits via
  * expansionMenuButtonsDown(), so they're covered too. */
-#define MENU_RESERVED_BITS (WPAD_BUTTON_HOME | WPAD_BUTTON_UP | WPAD_BUTTON_DOWN | \
-                            WPAD_BUTTON_LEFT | WPAD_BUTTON_RIGHT | \
-                            WPAD_CLASSIC_BUTTON_HOME | WPAD_CLASSIC_BUTTON_UP | \
-                            WPAD_CLASSIC_BUTTON_DOWN | WPAD_CLASSIC_BUTTON_LEFT | \
-                            WPAD_CLASSIC_BUTTON_RIGHT)
+#define MENU_RESERVED_BITS (WPAD_BUTTON_HOME | WPAD_BUTTON_UP | WPAD_BUTTON_DOWN | WPAD_BUTTON_LEFT | WPAD_BUTTON_RIGHT | \
+                             WPAD_CLASSIC_BUTTON_HOME | WPAD_CLASSIC_BUTTON_UP | WPAD_CLASSIC_BUTTON_DOWN | WPAD_CLASSIC_BUTTON_LEFT | WPAD_CLASSIC_BUTTON_RIGHT)
 
 /* HOME on the bare Wiimote, or HOME on a Classic Controller riding it -- so
  * pausing/exiting never requires touching the Wii Remote itself when playing
@@ -879,25 +767,19 @@ static u8 defaultJoystick(u32 expType, int gcConnected){
  * Wii A/B/1/2, Nunchuk B/A/Z/C, Classic B/A/X/Y, GC A/B/X/Y. Player-editable
  * from Settings > Edit Controls (see the pauseMenu[0]==7 case below). */
 static u32 btnMapWii[4]     = { WPAD_BUTTON_A, WPAD_BUTTON_B, WPAD_BUTTON_1, WPAD_BUTTON_2 };
-static u32 btnMapNunchuk[4] = { WPAD_BUTTON_B, WPAD_BUTTON_A,
-                                WPAD_NUNCHUK_BUTTON_Z, WPAD_NUNCHUK_BUTTON_C };
-static u32 btnMapClassic[4] = { WPAD_CLASSIC_BUTTON_B, WPAD_CLASSIC_BUTTON_A,
-                                WPAD_CLASSIC_BUTTON_X, WPAD_CLASSIC_BUTTON_Y };
+static u32 btnMapNunchuk[4] = { WPAD_BUTTON_B, WPAD_BUTTON_A, WPAD_NUNCHUK_BUTTON_Z, WPAD_NUNCHUK_BUTTON_C };
+static u32 btnMapClassic[4] = { WPAD_CLASSIC_BUTTON_B, WPAD_CLASSIC_BUTTON_A, WPAD_CLASSIC_BUTTON_X, WPAD_CLASSIC_BUTTON_Y };
 static u32 btnMapGC[4]      = { PAD_BUTTON_A, PAD_BUTTON_B, PAD_BUTTON_X, PAD_BUTTON_Y };
 
 /* Buttons a player is allowed to remap onto. D-pad/HOME/START stay hardwired
  * to navigation/pause, same reasoning as MENU_RESERVED_BITS/MENU_HOME_BITS
  * above -- letting those be reassigned would fight the menu system itself. */
-#define REMAP_WII_MASK     (WPAD_BUTTON_A | WPAD_BUTTON_B | WPAD_BUTTON_1 | WPAD_BUTTON_2 | \
-                            WPAD_BUTTON_MINUS | WPAD_BUTTON_PLUS)
+#define REMAP_WII_MASK     (WPAD_BUTTON_A | WPAD_BUTTON_B | WPAD_BUTTON_1 | WPAD_BUTTON_2 | WPAD_BUTTON_MINUS | WPAD_BUTTON_PLUS)
 #define REMAP_NUNCHUK_MASK (REMAP_WII_MASK | WPAD_NUNCHUK_BUTTON_Z | WPAD_NUNCHUK_BUTTON_C)
-#define REMAP_CLASSIC_MASK (WPAD_CLASSIC_BUTTON_A | WPAD_CLASSIC_BUTTON_B | \
-                            WPAD_CLASSIC_BUTTON_X | WPAD_CLASSIC_BUTTON_Y | \
-                            WPAD_CLASSIC_BUTTON_ZL | WPAD_CLASSIC_BUTTON_ZR | \
-                            WPAD_CLASSIC_BUTTON_FULL_L | WPAD_CLASSIC_BUTTON_FULL_R | \
-                            WPAD_CLASSIC_BUTTON_MINUS | WPAD_CLASSIC_BUTTON_PLUS)
-#define REMAP_GC_MASK      (PAD_BUTTON_A | PAD_BUTTON_B | PAD_BUTTON_X | PAD_BUTTON_Y | \
-                            PAD_TRIGGER_L | PAD_TRIGGER_R | PAD_TRIGGER_Z)
+#define REMAP_CLASSIC_MASK (WPAD_CLASSIC_BUTTON_A | WPAD_CLASSIC_BUTTON_B | WPAD_CLASSIC_BUTTON_X | WPAD_CLASSIC_BUTTON_Y | \
+                             WPAD_CLASSIC_BUTTON_ZL | WPAD_CLASSIC_BUTTON_ZR | WPAD_CLASSIC_BUTTON_FULL_L | WPAD_CLASSIC_BUTTON_FULL_R | \
+                             WPAD_CLASSIC_BUTTON_MINUS | WPAD_CLASSIC_BUTTON_PLUS)
+#define REMAP_GC_MASK      (PAD_BUTTON_A | PAD_BUTTON_B | PAD_BUTTON_X | PAD_BUTTON_Y | PAD_TRIGGER_L | PAD_TRIGGER_R | PAD_TRIGGER_Z)
 
 static u32* schemeButtonMap(u8 scheme){
 	switch (scheme) {
@@ -959,7 +841,7 @@ static const char* buttonLabel(u8 scheme, u32 bit){
 }
 
 static void controlsLoad(){
-	if (btnmapBase == NULL)      btnmapBase      = GRRLIB_LoadTexture(btnmap_base_png);
+	if (btnmapBase == NULL)    btnmapBase    = GRRLIB_LoadTexture(btnmap_base_png);
 	if (btnmapSelect[0] == NULL) btnmapSelect[0] = GRRLIB_LoadTexture(btnmap_select1_png);
 	if (btnmapSelect[1] == NULL) btnmapSelect[1] = GRRLIB_LoadTexture(btnmap_select2_png);
 	if (btnmapSelect[2] == NULL) btnmapSelect[2] = GRRLIB_LoadTexture(btnmap_select3_png);
@@ -967,112 +849,75 @@ static void controlsLoad(){
 }
 static void controlsFree(){
 	int i;
-	if (btnmapBase != NULL) {
-		GRRLIB_FreeTexture(btnmapBase);
-		btnmapBase = NULL;
-	}
+	if (btnmapBase != NULL) { GRRLIB_FreeTexture(btnmapBase); btnmapBase = NULL; }
 	for (i = 0; i < 4; i++)
-		if (btnmapSelect[i] != NULL) {
-			GRRLIB_FreeTexture(btnmapSelect[i]);
-			btnmapSelect[i] = NULL;
-		}
+		if (btnmapSelect[i] != NULL) { GRRLIB_FreeTexture(btnmapSelect[i]); btnmapSelect[i] = NULL; }
 }
 
 //In-game controls
 static void readevents(){
-	WPAD_ScanPads();
-	PAD_ScanPads();
+		
+		WPAD_ScanPads();
+		PAD_ScanPads();
 
-	if (WPAD_ButtonsDown(0) & MENU_HOME_BITS || PAD_ButtonsDown(0) & PAD_BUTTON_START) {
-		emustatus = 2;
-		sound_stop();
-	}
+		if (WPAD_ButtonsDown(0) & MENU_HOME_BITS || PAD_ButtonsDown(0) & PAD_BUTTON_START) { emustatus = 2; sound_stop(); }
+		
+		if(joystick == JOY_WII)//Wiimote
+		{
+			applyButtonMap(btnMapWii, WPAD_ButtonsDown(0), WPAD_ButtonsUp(0));
 
-	if (joystick == JOY_WII) { //Wiimote
-		applyButtonMap(btnMapWii, WPAD_ButtonsDown(0), WPAD_ButtonsUp(0));
+			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_RIGHT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_RIGHT) alg_jch1 = 0xff;
+			else if (WPAD_ButtonsDown(0) & WPAD_BUTTON_LEFT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_LEFT) alg_jch1 = 0x00;
+			else alg_jch1 = 0x80;
 
-		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_RIGHT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_RIGHT)
-			alg_jch1 = 0xff;
-		else if (WPAD_ButtonsDown(0) & WPAD_BUTTON_LEFT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_LEFT)
-			alg_jch1 = 0x00;
-		else
-			alg_jch1 = 0x80;
+			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_DOWN || WPAD_ButtonsHeld(0) & WPAD_BUTTON_DOWN) alg_jch0 = 0xff;
+			else if (WPAD_ButtonsDown(0) & WPAD_BUTTON_UP || WPAD_ButtonsHeld(0) & WPAD_BUTTON_UP) alg_jch0 = 0x00;
+			else alg_jch0 = 0x80;
+		}else if(joystick == JOY_NUNCHUK)
+		{
+			expansion_t exp;
+			WPAD_Expansion(0, &exp);
 
-		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_DOWN || WPAD_ButtonsHeld(0) & WPAD_BUTTON_DOWN)
-			alg_jch0 = 0xff;
-		else if (WPAD_ButtonsDown(0) & WPAD_BUTTON_UP || WPAD_ButtonsHeld(0) & WPAD_BUTTON_UP)
-			alg_jch0 = 0x00;
-		else
-			alg_jch0 = 0x80;
-	} else if (joystick == JOY_NUNCHUK) {
-		expansion_t exp;
-		WPAD_Expansion(0, &exp);
+			applyButtonMap(btnMapNunchuk, WPAD_ButtonsDown(0), WPAD_ButtonsUp(0));
 
-		applyButtonMap(btnMapNunchuk, WPAD_ButtonsDown(0), WPAD_ButtonsUp(0));
+			//Wiimote held upright here, so the d-pad isn't rotated like the bare-Wiimote scheme above
+			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_UP || WPAD_ButtonsHeld(0) & WPAD_BUTTON_UP) alg_jch1 = 0xff;
+			else if (WPAD_ButtonsDown(0) & WPAD_BUTTON_DOWN || WPAD_ButtonsHeld(0) & WPAD_BUTTON_DOWN) alg_jch1 = 0x00;
+			else if (exp.type == WPAD_EXP_NUNCHUK) alg_jch1 = axisToByte(exp.nunchuk.js.pos.y, exp.nunchuk.js.center.y, exp.nunchuk.js.min.y, exp.nunchuk.js.max.y);
+			else alg_jch1 = 0x80;
 
-		//Wiimote held upright here, so the d-pad isn't rotated like the bare-Wiimote scheme above
-		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_UP || WPAD_ButtonsHeld(0) & WPAD_BUTTON_UP)
-			alg_jch1 = 0xff;
-		else if (WPAD_ButtonsDown(0) & WPAD_BUTTON_DOWN || WPAD_ButtonsHeld(0) & WPAD_BUTTON_DOWN)
-			alg_jch1 = 0x00;
-		else if (exp.type == WPAD_EXP_NUNCHUK)
-			alg_jch1 = axisToByte(exp.nunchuk.js.pos.y, exp.nunchuk.js.center.y,
-			                      exp.nunchuk.js.min.y, exp.nunchuk.js.max.y);
-		else
-			alg_jch1 = 0x80;
+			if (WPAD_ButtonsDown(0) & WPAD_BUTTON_RIGHT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_RIGHT) alg_jch0 = 0xff;
+			else if (WPAD_ButtonsDown(0) & WPAD_BUTTON_LEFT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_LEFT) alg_jch0 = 0x00;
+			else if (exp.type == WPAD_EXP_NUNCHUK) alg_jch0 = axisToByte(exp.nunchuk.js.pos.x, exp.nunchuk.js.center.x, exp.nunchuk.js.min.x, exp.nunchuk.js.max.x);
+			else alg_jch0 = 0x80;
+		}else if(joystick == JOY_CLASSIC)
+		{
+			expansion_t exp;
+			u32 cd = WPAD_ButtonsDown(0), cu = WPAD_ButtonsUp(0), ch = WPAD_ButtonsHeld(0);
+			WPAD_Expansion(0, &exp);
 
-		if (WPAD_ButtonsDown(0) & WPAD_BUTTON_RIGHT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_RIGHT)
-			alg_jch0 = 0xff;
-		else if (WPAD_ButtonsDown(0) & WPAD_BUTTON_LEFT || WPAD_ButtonsHeld(0) & WPAD_BUTTON_LEFT)
-			alg_jch0 = 0x00;
-		else if (exp.type == WPAD_EXP_NUNCHUK)
-			alg_jch0 = axisToByte(exp.nunchuk.js.pos.x, exp.nunchuk.js.center.x,
-			                      exp.nunchuk.js.min.x, exp.nunchuk.js.max.x);
-		else
-			alg_jch0 = 0x80;
-	} else if (joystick == JOY_CLASSIC) {
-		expansion_t exp;
-		u32 cd = WPAD_ButtonsDown(0), cu = WPAD_ButtonsUp(0), ch = WPAD_ButtonsHeld(0);
-		WPAD_Expansion(0, &exp);
+			applyButtonMap(btnMapClassic, cd, cu);
 
-		applyButtonMap(btnMapClassic, cd, cu);
+			if (cd & WPAD_CLASSIC_BUTTON_UP || ch & WPAD_CLASSIC_BUTTON_UP) alg_jch1 = 0xff;
+			else if (cd & WPAD_CLASSIC_BUTTON_DOWN || ch & WPAD_CLASSIC_BUTTON_DOWN) alg_jch1 = 0x00;
+			else if (exp.type == WPAD_EXP_CLASSIC) alg_jch1 = axisToByte(exp.classic.ljs.pos.y, exp.classic.ljs.center.y, exp.classic.ljs.min.y, exp.classic.ljs.max.y);
+			else alg_jch1 = 0x80;
 
-		if (cd & WPAD_CLASSIC_BUTTON_UP || ch & WPAD_CLASSIC_BUTTON_UP)
-			alg_jch1 = 0xff;
-		else if (cd & WPAD_CLASSIC_BUTTON_DOWN || ch & WPAD_CLASSIC_BUTTON_DOWN)
-			alg_jch1 = 0x00;
-		else if (exp.type == WPAD_EXP_CLASSIC)
-			alg_jch1 = axisToByte(exp.classic.ljs.pos.y, exp.classic.ljs.center.y,
-			                      exp.classic.ljs.min.y, exp.classic.ljs.max.y);
-		else
-			alg_jch1 = 0x80;
+			if (cd & WPAD_CLASSIC_BUTTON_RIGHT || ch & WPAD_CLASSIC_BUTTON_RIGHT) alg_jch0 = 0xff;
+			else if (cd & WPAD_CLASSIC_BUTTON_LEFT || ch & WPAD_CLASSIC_BUTTON_LEFT) alg_jch0 = 0x00;
+			else if (exp.type == WPAD_EXP_CLASSIC) alg_jch0 = axisToByte(exp.classic.ljs.pos.x, exp.classic.ljs.center.x, exp.classic.ljs.min.x, exp.classic.ljs.max.x);
+			else alg_jch0 = 0x80;
+		}else{ //GC
+			applyButtonMap(btnMapGC, PAD_ButtonsDown(0), PAD_ButtonsUp(0));
 
-		if (cd & WPAD_CLASSIC_BUTTON_RIGHT || ch & WPAD_CLASSIC_BUTTON_RIGHT)
-			alg_jch0 = 0xff;
-		else if (cd & WPAD_CLASSIC_BUTTON_LEFT || ch & WPAD_CLASSIC_BUTTON_LEFT)
-			alg_jch0 = 0x00;
-		else if (exp.type == WPAD_EXP_CLASSIC)
-			alg_jch0 = axisToByte(exp.classic.ljs.pos.x, exp.classic.ljs.center.x,
-			                      exp.classic.ljs.min.x, exp.classic.ljs.max.x);
-		else
-			alg_jch0 = 0x80;
-	} else { //GC
-		applyButtonMap(btnMapGC, PAD_ButtonsDown(0), PAD_ButtonsUp(0));
+			if (PAD_ButtonsDown(0) & PAD_BUTTON_UP || PAD_ButtonsHeld(0) & PAD_BUTTON_UP) alg_jch1 = 0xff;
+			else if (PAD_ButtonsDown(0) & PAD_BUTTON_DOWN || PAD_ButtonsHeld(0) & PAD_BUTTON_DOWN) alg_jch1 = 0x00;
+			else alg_jch1 = (PAD_StickY(0)) + 0x80;
 
-		if (PAD_ButtonsDown(0) & PAD_BUTTON_UP || PAD_ButtonsHeld(0) & PAD_BUTTON_UP)
-			alg_jch1 = 0xff;
-		else if (PAD_ButtonsDown(0) & PAD_BUTTON_DOWN || PAD_ButtonsHeld(0) & PAD_BUTTON_DOWN)
-			alg_jch1 = 0x00;
-		else
-			alg_jch1 = (PAD_StickY(0)) + 0x80;
-
-		if (PAD_ButtonsDown(0) & PAD_BUTTON_RIGHT || PAD_ButtonsHeld(0) & PAD_BUTTON_RIGHT)
-			alg_jch0 = 0xff;
-		else if (PAD_ButtonsDown(0) & PAD_BUTTON_LEFT || PAD_ButtonsHeld(0) & PAD_BUTTON_LEFT)
-			alg_jch0 = 0x00;
-		else
-			alg_jch0 = (PAD_StickX(0)) + 0x80;
-	}
+			if (PAD_ButtonsDown(0) & PAD_BUTTON_RIGHT || PAD_ButtonsHeld(0) & PAD_BUTTON_RIGHT) alg_jch0 = 0xff;
+			else if (PAD_ButtonsDown(0) & PAD_BUTTON_LEFT || PAD_ButtonsHeld(0) & PAD_BUTTON_LEFT) alg_jch0 = 0x00;
+			else alg_jch0 = (PAD_StickX(0)) + 0x80;
+		}		
 }
 
 //Checks the file extension - no further checks are needed
@@ -1156,8 +1001,7 @@ static void CreditsScroll(){
 	while(!done){
 		WPAD_ScanPads();
 		PAD_ScanPads();
-		if((WPAD_ButtonsDown(0) & (WPAD_BUTTON_1 | WPAD_BUTTON_B | WPAD_CLASSIC_BUTTON_B |
-		                           MENU_HOME_BITS)) ||
+		if((WPAD_ButtonsDown(0) & (WPAD_BUTTON_1 | WPAD_BUTTON_B | WPAD_CLASSIC_BUTTON_B | MENU_HOME_BITS)) ||
 		   (PAD_ButtonsDown(0) & PAD_BUTTON_B))
 			done = 1;
 
@@ -1186,18 +1030,10 @@ void PauseMenu(); //also serves the title screen's Settings entry (see settingsF
  * for its overlay texture, so it bites long before the arena is really full.
  * Idempotent: safe to call on any exit path and again at the end. */
 static void menuRelease(DIR **pdirSD, DIR **pdirUSB, u16 **romlocSD, u16 **romlocUSB){
-	if(*pdirSD != NULL) {
-		closedir(*pdirSD);
-		*pdirSD = NULL;
-	}
-	if(*pdirUSB != NULL) {
-		closedir(*pdirUSB);
-		*pdirUSB = NULL;
-	}
-	free(*romlocSD);
-	*romlocSD = NULL;
-	free(*romlocUSB);
-	*romlocUSB = NULL;
+	if(*pdirSD != NULL)  { closedir(*pdirSD);  *pdirSD = NULL; }
+	if(*pdirUSB != NULL) { closedir(*pdirUSB); *pdirUSB = NULL; }
+	free(*romlocSD);  *romlocSD = NULL;
+	free(*romlocUSB); *romlocUSB = NULL;
 }
 
 //Main menu.
@@ -1205,8 +1041,7 @@ void Menu()
 {
 	s16 i=0, roms[2]={0, 0};
 	u8 MenuOption = 1, sdDevice = 0;
-	//restore the last cartridge selection (see savedCategory/savedBrowse)
-	Category currentCategory = savedCategory;
+	Category currentCategory = savedCategory; //restore the last cartridge selection (see savedCategory/savedBrowse)
 	u16 * romlocSD = NULL, * romlocUSB = NULL;
 	int turnOn=0;
 
@@ -1237,8 +1072,7 @@ void Menu()
 		rewinddir(pdirSD);
 		while ((pent=readdir(pdirSD))!=NULL) //Store all the locations
 			if (isRom(pent->d_name))
-				//The -1 is required here; the reason is still unclear
-				romlocSD[i++] = telldir(pdirSD)-1;
+				romlocSD[i++] = telldir(pdirSD)-1; //The -1 is required here; the reason is still unclear
 		i=0;
 	}
 
@@ -1278,10 +1112,7 @@ void Menu()
 		int count; //number of ROMs browsable in the current category
 
 		//The options screen owns the whole frame while it's open
-		if(settingsFromTitle){
-			PauseMenu();
-			continue;
-		}
+		if(settingsFromTitle){ PauseMenu(); continue; }
 
 		WPAD_ScanPads();
 		PAD_ScanPads();
@@ -1300,63 +1131,40 @@ void Menu()
 		//Move the menu cursor (Wiimote R/L, GC U/D)
 		if (wd & WPAD_BUTTON_RIGHT || gd & PAD_BUTTON_UP) MenuOption--;
 		if (wd & WPAD_BUTTON_LEFT || gd & PAD_BUTTON_DOWN) MenuOption++;
-		if(MenuOption < 1) MenuOption = 5;
-		if(MenuOption > 5) MenuOption = 1;
+		if(MenuOption < 1) MenuOption = 5; if(MenuOption > 5) MenuOption = 1;
 
 		if (WPAD_ButtonsDown(0) & MENU_HOME_BITS || PAD_ButtonsDown(0) & PAD_BUTTON_START)
 		{
 			if(MenuOption == 4)
 			{
 				menuRelease(&pdirSD, &pdirUSB, &romlocSD, &romlocUSB);
-				GRRLIB_Exit();
-				GRRLIB_FreeTexture(splash);
+				GRRLIB_Exit(); GRRLIB_FreeTexture(splash);
 				exit(0);
 			}else
 				MenuOption = 4;
+
 		}
 
-		//Exclude PADs, HOME/START and the D-pads read above.
-		//Any other button triggers the selected option
-		if (WPAD_ButtonsDown(0) & ~MENU_RESERVED_BITS || PAD_ButtonsDown(0) & ~0x100F)
+		if (WPAD_ButtonsDown(0) & ~MENU_RESERVED_BITS || PAD_ButtonsDown(0) & ~0x100F) //Exclude PADs, HOME/START and the D-pads read above. Any other button triggers the selected option
 		{
 			switch(MenuOption)
 			{
-				//Cycle cartridge category: Wiimote 1/-/B = back, 2/+/A = forward;
-				//Classic -/B = back, +/A = forward; GC L/B = back, R/A = forward
-				case 2:
+				case 2:	//Cycle cartridge category: Wiimote 1/-/B = back, 2/+/A = forward; Classic -/B = back, +/A = forward; GC L/B = back, R/A = forward
 				{
-					//wd (outer scope) already carries the Wiimote's own buttons
-					u32 pd = PAD_ButtonsDown(0);
-					int back    = (wd & (WPAD_BUTTON_1 | WPAD_BUTTON_MINUS | WPAD_BUTTON_B |
-					                     WPAD_CLASSIC_BUTTON_MINUS | WPAD_CLASSIC_BUTTON_B)) ||
-					              (pd & (PAD_TRIGGER_L | PAD_BUTTON_B));
-					int forward = (wd & (WPAD_BUTTON_2 | WPAD_BUTTON_PLUS  | WPAD_BUTTON_A |
-					                     WPAD_CLASSIC_BUTTON_PLUS  | WPAD_CLASSIC_BUTTON_A)) ||
-					              (pd & (PAD_TRIGGER_R | PAD_BUTTON_A));
-
-					if(back) {
-						currentCategory = (Category)((currentCategory + CAT_COUNT - 1) % CAT_COUNT);
-						i = 0;
-					} else if(forward) {
-						currentCategory = (Category)((currentCategory + 1) % CAT_COUNT);
-						i = 0;
-					}
+					u32 pd = PAD_ButtonsDown(0); //wd (outer scope) already carries the Wiimote's own buttons
+					int back    = (wd & (WPAD_BUTTON_1 | WPAD_BUTTON_MINUS | WPAD_BUTTON_B | WPAD_CLASSIC_BUTTON_MINUS | WPAD_CLASSIC_BUTTON_B)) || (pd & (PAD_TRIGGER_L | PAD_BUTTON_B));
+					int forward = (wd & (WPAD_BUTTON_2 | WPAD_BUTTON_PLUS  | WPAD_BUTTON_A | WPAD_CLASSIC_BUTTON_PLUS  | WPAD_CLASSIC_BUTTON_A)) || (pd & (PAD_TRIGGER_R | PAD_BUTTON_A));
+					if(back)         { currentCategory = (Category)((currentCategory + CAT_COUNT - 1) % CAT_COUNT); i = 0; }
+					else if(forward) { currentCategory = (Category)((currentCategory + 1) % CAT_COUNT); i = 0; }
 				}
 				break;
 				case 3: //Settings (shares the pause menu's option pages)
-					settingsFromTitle = 1;
-					previewLoad();
-					//option list, first row
-					pauseMenu[0] = 0;
-					pauseMenu[1] = 2;
-					//otherwise the title screen below still draws+presents once
-					//more before the loop notices settingsFromTitle next iteration
-					//-- a stray extra frame that flashes back in behind Settings
-					continue;
+					settingsFromTitle = 1; previewLoad();
+					pauseMenu[0] = 0; pauseMenu[1] = 2; //option list, first row
+					continue; //otherwise the title screen below still draws+presents once more before the loop notices settingsFromTitle next iteration -- a stray extra frame that flashes back in behind Settings
 				case 4: //Exit!
 					menuRelease(&pdirSD, &pdirUSB, &romlocSD, &romlocUSB);
-					GRRLIB_Exit();
-					GRRLIB_FreeTexture(splash);
+					GRRLIB_Exit(); GRRLIB_FreeTexture(splash);
 					exit(0);
 				break;
 				case 5: //Credits roll (1/B returns here)
@@ -1365,10 +1173,7 @@ void Menu()
 				default:
 				{
 					turnOn = 1;
-					//remember the position for next time
-					savedCategory = currentCategory;
-					savedBrowse = i;
-
+					savedCategory = currentCategory; savedBrowse = i; //remember the position for next time
 					/* Check the GC pad FIRST and directly (same mask as the outer trigger
 					 * check above, 0x100F) rather than inferring "must be GC" from the
 					 * Wiimote's silence: WPAD_ButtonsDown(0) can be non-zero on the very
@@ -1389,24 +1194,19 @@ void Menu()
 					if (currentCategory == CAT_NA)
 					{
 						menuRelease(&pdirSD, &pdirUSB, &romlocSD, &romlocUSB);
-						//cart[] stays empty: Mine Storm runs from rom[]
-						overlay = GRRLIB_LoadTexture(Minestorm_png);
+						overlay = GRRLIB_LoadTexture(Minestorm_png); //cart[] stays empty: Mine Storm runs from rom[]
 					}
 					else if (currentCategory == CAT_SD)
 					{
 						if (pent != NULL)
 						{
 							FILE *cartfile;
-							//"<dev>:/vec/" + a full-length 255-char d_name
-							char cartname[300], overlaypath[300];
+							char cartname[300], overlaypath[300]; //"<dev>:/vec/" + a full-length 255-char d_name
 							const char *dev = (sdDevice == 1) ? "usb" : "sd";
 
 							snprintf(cartname, sizeof(cartname), "%s:/vec/%s", dev, pent->d_name);
-							snprintf(overlaypath, sizeof(overlaypath), "%s:/vec/%s", dev,
-							         pent->d_name);
-							overlaypath[strlen(overlaypath)-3] = 'p';
-							overlaypath[strlen(overlaypath)-2] = 'n';
-							overlaypath[strlen(overlaypath)-1] = 'g';
+							snprintf(overlaypath, sizeof(overlaypath), "%s:/vec/%s", dev, pent->d_name);
+							overlaypath[strlen(overlaypath)-3] = 'p'; overlaypath[strlen(overlaypath)-2] = 'n';	overlaypath[strlen(overlaypath)-1] = 'g';
 
 							cartfile = fopen (cartname, "rb");
 							if (cartfile != NULL) {
@@ -1417,9 +1217,7 @@ void Menu()
 								overlay = GRRLIB_LoadTextureFromFile(overlaypath);
 
 								if(overlay == NULL){ //Try uppercase extension...
-									overlaypath[strlen(overlaypath)-3] = 'P';
-									overlaypath[strlen(overlaypath)-2] = 'N';
-									overlaypath[strlen(overlaypath)-1] = 'G';
+									overlaypath[strlen(overlaypath)-3] = 'P'; overlaypath[strlen(overlaypath)-2] = 'N';	overlaypath[strlen(overlaypath)-1] = 'G';
 									overlay = GRRLIB_LoadTextureFromFile(overlaypath);
 								}
 
@@ -1439,16 +1237,13 @@ void Menu()
 						memset(cart, 0, sizeof(cart));
 						memcpy(cart, tbl[i].rom, tbl[i].rom_size);
 						//Demos never had overlays; a NULL here just means "no overlay"
-						overlay = (tbl[i].overlay != NULL)
-						          ? GRRLIB_LoadTexture(tbl[i].overlay)
-						          : NULL;
+						overlay = (tbl[i].overlay != NULL) ? GRRLIB_LoadTexture(tbl[i].overlay) : NULL;
 					}
 
-					//turnOn can have been reset to 0 above (missing file, empty
-					//category) -- only skip ahead if we're actually launching, same
-					//reasoning as the Settings continue above: otherwise the title
-					//screen redraws+presents itself once more right as the loop is
-					//about to exit, a stray extra frame behind the game starting.
+					//turnOn can have been reset to 0 above (missing file, empty category) -- only
+					//skip ahead if we're actually launching, same reasoning as the Settings continue
+					//above: otherwise the title screen redraws+presents itself once more right as
+					//the loop is about to exit, a stray extra frame behind the game starting.
 					if(turnOn) continue;
 				}
 				break;
@@ -1460,27 +1255,15 @@ void Menu()
 		else if(currentCategory == CAT_SD) count = roms[0] + roms[1];
 		else count = categoryEmbeddedCount(currentCategory);
 		if(count < 1) count = 1;
-		if(i < 0) i = count - 1;
-		if(i >= count) i = 0;
+		if(i < 0) i = count - 1; if(i >= count) i = 0;
 
 		//Resolve the SD/USB dirent for the current combined browse index.
 		//The handle/table checks matter because menuRelease() clears them the
 		//moment a game is chosen; no path reaches here afterwards today, but a
 		//stale seekdir would be a silent crash rather than a visible bug.
 		if(currentCategory == CAT_SD && (roms[0] + roms[1]) > 0){
-			if(i < roms[0]) {
-				if(pdirSD != NULL && romlocSD != NULL) {
-					sdDevice = 0;
-					seekdir(pdirSD, romlocSD[i]);
-					pent = readdir(pdirSD);
-				}
-			} else {
-				if(pdirUSB != NULL && romlocUSB != NULL) {
-					sdDevice = 1;
-					seekdir(pdirUSB, romlocUSB[i - roms[0]]);
-					pent = readdir(pdirUSB);
-				}
-			}
+			if(i < roms[0]) { if(pdirSD  != NULL && romlocSD  != NULL) { sdDevice = 0; seekdir(pdirSD,  romlocSD[i]);            pent = readdir(pdirSD);  } }
+			else            { if(pdirUSB != NULL && romlocUSB != NULL) { sdDevice = 1; seekdir(pdirUSB, romlocUSB[i - roms[0]]); pent = readdir(pdirUSB); } }
 		}
 
 		//The whole title screen shrinks with the Screen Size setting, exactly like
@@ -1509,8 +1292,7 @@ void Menu()
 		 * is nearly three times the width of [NA]. */
 		{
 			const char *catlabel = categoryLabel(currentCategory, sdDevice);
-			int xCart = (rmode->fbWidth
-			             - (wCart + (int) GRRLIB_WidthTTF(myFont, catlabel, szOpt))) / 2;
+			int xCart = (rmode->fbWidth - (wCart + (int) GRRLIB_WidthTTF(myFont, catlabel, szOpt))) / 2;
 
 			GRRLIB_PrintfTTF(xOn,   TSY(178), myFont, "Turn vectrex ON",  szHead, 0x228B22FF);
 			GRRLIB_PrintfTTF(xCart, TSY(216), myFont, "Cartridge",        szOpt,  0xFFFFFFFF);
@@ -1519,16 +1301,11 @@ void Menu()
 			GRRLIB_PrintfTTF(xExit, TSY(290), myFont, "Return to loader", szHead, 0xFFFFFFFF);
 			GRRLIB_PrintfTTF(xCred, TSY(420), myFont, "Credits",          szHead, 0x228B22FF);
 
-			if(MenuOption == 1)
-				GRRLIB_PrintfTTF(xOn   - wCur, TSY(178), myFont, ">", szCur, 0xFF0000FF);
-			else if(MenuOption == 2)
-				GRRLIB_PrintfTTF(xCart - wCur, TSY(216), myFont, ">", szCur, 0xFF0000FF);
-			else if(MenuOption == 3)
-				GRRLIB_PrintfTTF(xSet  - wCur, TSY(251), myFont, ">", szCur, 0xFF0000FF);
-			else if(MenuOption == 4)
-				GRRLIB_PrintfTTF(xExit - wCur, TSY(290), myFont, ">", szCur, 0xFF0000FF);
-			else
-				GRRLIB_PrintfTTF(xCred - wCur, TSY(420), myFont, ">", szCur, 0xFF0000FF);
+			if(MenuOption == 1)      GRRLIB_PrintfTTF(xOn   - wCur, TSY(178), myFont, ">", szCur, 0xFF0000FF);
+			else if(MenuOption == 2) GRRLIB_PrintfTTF(xCart - wCur, TSY(216), myFont, ">", szCur, 0xFF0000FF);
+			else if(MenuOption == 3) GRRLIB_PrintfTTF(xSet  - wCur, TSY(251), myFont, ">", szCur, 0xFF0000FF);
+			else if(MenuOption == 4) GRRLIB_PrintfTTF(xExit - wCur, TSY(290), myFont, ">", szCur, 0xFF0000FF);
+			else                     GRRLIB_PrintfTTF(xCred - wCur, TSY(420), myFont, ">", szCur, 0xFF0000FF);
 		}
 
 		if(currentCategory == CAT_NA)
@@ -1537,11 +1314,8 @@ void Menu()
 			if(pent != NULL){
 				char title[256];
 				int L;
-				strncpy(title, pent->d_name, sizeof(title)-1);
-				title[sizeof(title)-1] = '\0';
-				//Drop the .vec extension for display
-				L = strlen(title);
-				if(L > 4) title[L-4] = '\0';
+				strncpy(title, pent->d_name, sizeof(title)-1); title[sizeof(title)-1] = '\0';
+				L = strlen(title); if(L > 4) title[L-4] = '\0'; //Drop the .vec extension for display
 				PrintRomTitle(TSY(340), title, s);
 			} else
 				PrintRomTitle(TSY(340), "No ROMs on SD/USB", s);
@@ -1552,21 +1326,18 @@ void Menu()
 	}
 	#undef TSY
 
-	//belt and braces: no path leaves the scratch state behind
-	menuRelease(&pdirSD, &pdirUSB, &romlocSD, &romlocUSB);
+	menuRelease(&pdirSD, &pdirUSB, &romlocSD, &romlocUSB); //belt and braces: no path leaves the scratch state behind
 }
 
 void PauseMenu()
 {
 	u8 input = 0;
-	int MenuOffsets[5] = {
-		(rmode->fbWidth - GRRLIB_WidthTTF(myFont, "Resume Game", FONTHEAD)) / 2,
-		(rmode->fbWidth - GRRLIB_WidthTTF(myFont, "Turn vectrex OFF", FONTHEAD)) / 2,
-		(rmode->fbWidth - GRRLIB_WidthTTF(myFont, "Custom Color [ON]", FONTOPT)) / 2,
-		GRRLIB_WidthTTF(myFont, "Custom Color ", FONTOPT),
-		GRRLIB_WidthTTF(myFont, ">", (FONTHEAD + FONTOPT) / 2)
-	};
-
+	int MenuOffsets[5] = {	(rmode->fbWidth-GRRLIB_WidthTTF(myFont,"Resume Game", FONTHEAD))/2,
+							(rmode->fbWidth-GRRLIB_WidthTTF(myFont,"Turn vectrex OFF", FONTHEAD))/2,
+							(rmode->fbWidth-GRRLIB_WidthTTF(myFont,"Custom Color [ON]", FONTOPT))/2,
+							GRRLIB_WidthTTF(myFont,"Custom Color ", FONTOPT),
+							GRRLIB_WidthTTF(myFont,">", (FONTHEAD+FONTOPT)/2)};
+	
 	WPAD_ScanPads();
 	u32 padConnected = PAD_ScanPads();
 	int gcConnected = (padConnected & PAD_CHAN0_CONNECTED) != 0;
@@ -1601,11 +1372,8 @@ void PauseMenu()
 	if (WPAD_ButtonsDown(0) & ~MENU_RESERVED_BITS || PAD_ButtonsDown(0) & ~0x100F) input = 5;
 	if (WPAD_ButtonsDown(0) & MENU_HOME_BITS || PAD_ButtonsDown(0) & PAD_BUTTON_START) input = 6;
 
-	//no game to freeze yet: preview the options on a still instead
-	if (settingsFromTitle)
-		preview_render();
-	else
-		pause_render(); //Render the screen as it was when the emulation was interrumped
+	if(settingsFromTitle) preview_render(); //no game to freeze yet: preview the options on a still instead
+	else pause_render(); //Render the screen as it was when the emulation was interrumped
 
 	//Holding A/R peeks at the paused game behind the menu; pointless on the title screen.
 	//"Held" must exclude the very frame the button went down -- ButtonsHeld is
@@ -1619,574 +1387,329 @@ void PauseMenu()
 	{
 		u8 heldA = (WPAD_ButtonsHeld(0) & WPAD_BUTTON_A) != 0;
 		u8 heldR = (PAD_ButtonsHeld(0) & PAD_TRIGGER_R) != 0;
-		//both released at least once since Done -- safe to resume normal peeking
-		if (suppressPeek && !heldA && !heldR) suppressPeek = 0;
+		if(suppressPeek && !heldA && !heldR) suppressPeek = 0; //both released at least once since Done -- safe to resume normal peeking
 		u8 peekA = !suppressPeek && heldA && !(WPAD_ButtonsDown(0) & WPAD_BUTTON_A);
 		u8 peekR = !suppressPeek && heldR && !(PAD_ButtonsDown(0) & PAD_TRIGGER_R);
+	if(settingsFromTitle || pauseMenu[0] == 7 || (!peekR && !peekA))
+	{
+		GRRLIB_Rectangle(0, 160, rmode->fbWidth, 185, 0x000000D0, 1); //tall enough for all 8 rows, incl. "Turn vectrex OFF"/"Back" at y=306
 
-		if (settingsFromTitle || pauseMenu[0] == 7 || (!peekR && !peekA)) {
-			//tall enough for all 8 rows, incl. "Turn vectrex OFF"/"Back" at y=306
-			GRRLIB_Rectangle(0, 160, rmode->fbWidth, 185, 0x000000D0, 1);
+		switch(pauseMenu[0]){
+			case 2: //Overlay
+			//Process input
+				if(input == 3) optOverlay[1] -= (optOverlay[1] == 0 ? 0 : 15);
+				if(input == 4) optOverlay[1] += (optOverlay[1] == 255 ? 0 : 15);
+				if(input == 5 || input == 6) {pauseMenu[1] = pauseMenu[0] + 1; pauseMenu[0] = 0;} //cursor lands back on this setting's own row
+			
+			//Draw
+				PrintCenteredTTF(155, "Overlay", FONTHEAD, 0x228B22FF);
+				drawSliderCaption(215, "Opacity", optOverlay[1]);
+				GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2, 240, myFont, "[                  ]", FONTOPT, 0xFFFFFFFF);
+				GRRLIB_Rectangle( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2 + GRRLIB_WidthTTF(myFont, "[", FONTOPT) , 253, (GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6) * optOverlay[1] / 255 , 7, 0xFFFFFFFF, 1);
+			break;
+			case 3: //CustomColor
+			//Process input
+				if(input == 1) pauseMenu[1]--;	if(input == 2) pauseMenu[1]++;
+				if(pauseMenu[1] < 1) pauseMenu[1] = 3; if(pauseMenu[1] > 3) pauseMenu[1] = 1;
+				
+				if(input == 3) optVtxCustomColor[pauseMenu[1]] -= (optVtxCustomColor[pauseMenu[1]] == 0 ? 0 : 15);
+				if(input == 4) optVtxCustomColor[pauseMenu[1]] += (optVtxCustomColor[pauseMenu[1]] == 255 ? 0 : 15);
+				if(input == 5 || input == 6) {pauseMenu[1] = pauseMenu[0] + 1; pauseMenu[0] = 0;} //cursor lands back on this setting's own row
+			
+			//Draw
+				PrintCenteredTTF(155, "Custom Color", FONTHEAD, 0x228B22FF);
+				PrintCenteredTTF(195, "RGB Components", FONTOPT, 0xFFFFFFFF);
+				GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2, 220, myFont, "[                  ]", FONTOPT, 0xFF0000FF);
+				GRRLIB_Rectangle( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2 + GRRLIB_WidthTTF(myFont, "[", FONTOPT) , 233, (GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6) * optVtxCustomColor[1] / 255 , 7, 0xFF0000FF, 1);
+				GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2, 240, myFont, "[                  ]", FONTOPT, 0x00FF00FF);
+				GRRLIB_Rectangle( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2 + GRRLIB_WidthTTF(myFont, "[", FONTOPT) , 253, (GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6) * optVtxCustomColor[2] / 255 , 7, 0x00FF00FF, 1);
+				GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2, 260, myFont, "[                  ]", FONTOPT, 0x0000FFFF);
+				GRRLIB_Rectangle( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2 + GRRLIB_WidthTTF(myFont, "[", FONTOPT) , 273, (GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6) * optVtxCustomColor[3] / 255 , 7, 0x0000FFFF, 1);
+				
+				if(pauseMenu[1] == 1) GRRLIB_PrintfTTF((rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2-MenuOffsets[4], 220, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
+				else if(pauseMenu[1] == 2) GRRLIB_PrintfTTF((rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2-MenuOffsets[4], 240, myFont,">", (FONTHEAD+FONTOPT)/2,0x00FF00FF);
+				else GRRLIB_PrintfTTF((rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2-MenuOffsets[4], 260, myFont,">", (FONTHEAD+FONTOPT)/2,0x0000FFFF);
+			break;
+			case 4: //Glow
+			//Process input
+				if(input == 1) pauseMenu[1]--;	if(input == 2) pauseMenu[1]++;
+				if(pauseMenu[1] < 1) pauseMenu[1] = 2; if(pauseMenu[1] > 2) pauseMenu[1] = 1;
 
-			switch (pauseMenu[0]) {
-				case 2: //Overlay
-					//Process input
-					if (input == 3) optOverlay[1] -= (optOverlay[1] == 0 ? 0 : 15);
-					if (input == 4) optOverlay[1] += (optOverlay[1] == 255 ? 0 : 15);
-					//cursor lands back on this setting's own row
-					if (input == 5 || input == 6) {
-						pauseMenu[1] = pauseMenu[0] + 1;
-						pauseMenu[0] = 0;
-					}
+				if(input == 5 || input == 6) {pauseMenu[1] = pauseMenu[0] + 1; pauseMenu[0] = 0;} //cursor lands back on this setting's own row
 
-					//Draw
-					PrintCenteredTTF(155, "Overlay", FONTHEAD, 0x228B22FF);
-					drawSliderCaption(215, "Opacity", optOverlay[1]);
-					GRRLIB_PrintfTTF(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2,
-						240, myFont, "[                  ]", FONTOPT, 0xFFFFFFFF);
-					GRRLIB_Rectangle(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-							+ GRRLIB_WidthTTF(myFont, "[", FONTOPT),
-						253,
-						(GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6)
-							* optOverlay[1] / 255,
-						7, 0xFFFFFFFF, 1);
-					break;
-				case 3: //CustomColor
-					//Process input
-					if (input == 1) pauseMenu[1]--;
-					if (input == 2) pauseMenu[1]++;
-					if (pauseMenu[1] < 1) pauseMenu[1] = 3;
-					if (pauseMenu[1] > 3) pauseMenu[1] = 1;
-
-					if (input == 3)
-						optVtxCustomColor[pauseMenu[1]] -=
-							(optVtxCustomColor[pauseMenu[1]] == 0 ? 0 : 15);
-					if (input == 4)
-						optVtxCustomColor[pauseMenu[1]] +=
-							(optVtxCustomColor[pauseMenu[1]] == 255 ? 0 : 15);
-					//cursor lands back on this setting's own row
-					if (input == 5 || input == 6) {
-						pauseMenu[1] = pauseMenu[0] + 1;
-						pauseMenu[0] = 0;
-					}
-
-					//Draw
-					PrintCenteredTTF(155, "Custom Color", FONTHEAD, 0x228B22FF);
-					PrintCenteredTTF(195, "RGB Components", FONTOPT, 0xFFFFFFFF);
-					GRRLIB_PrintfTTF(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2,
-						220, myFont, "[                  ]", FONTOPT, 0xFF0000FF);
-					GRRLIB_Rectangle(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-							+ GRRLIB_WidthTTF(myFont, "[", FONTOPT),
-						233,
-						(GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6)
-							* optVtxCustomColor[1] / 255,
-						7, 0xFF0000FF, 1);
-					GRRLIB_PrintfTTF(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2,
-						240, myFont, "[                  ]", FONTOPT, 0x00FF00FF);
-					GRRLIB_Rectangle(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-							+ GRRLIB_WidthTTF(myFont, "[", FONTOPT),
-						253,
-						(GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6)
-							* optVtxCustomColor[2] / 255,
-						7, 0x00FF00FF, 1);
-					GRRLIB_PrintfTTF(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2,
-						260, myFont, "[                  ]", FONTOPT, 0x0000FFFF);
-					GRRLIB_Rectangle(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-							+ GRRLIB_WidthTTF(myFont, "[", FONTOPT),
-						273,
-						(GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6)
-							* optVtxCustomColor[3] / 255,
-						7, 0x0000FFFF, 1);
-
-					if (pauseMenu[1] == 1)
-						GRRLIB_PrintfTTF(
-							(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-								- MenuOffsets[4],
-							220, myFont, ">", (FONTHEAD + FONTOPT) / 2, 0xFF0000FF);
-					else if (pauseMenu[1] == 2)
-						GRRLIB_PrintfTTF(
-							(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-								- MenuOffsets[4],
-							240, myFont, ">", (FONTHEAD + FONTOPT) / 2, 0x00FF00FF);
-					else
-						GRRLIB_PrintfTTF(
-							(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-								- MenuOffsets[4],
-							260, myFont, ">", (FONTHEAD + FONTOPT) / 2, 0x0000FFFF);
-					break;
-				case 4: //Glow
-					//Process input
-					if (input == 1) pauseMenu[1]--;
-					if (input == 2) pauseMenu[1]++;
-					if (pauseMenu[1] < 1) pauseMenu[1] = 2;
-					if (pauseMenu[1] > 2) pauseMenu[1] = 1;
-
-					//cursor lands back on this setting's own row
-					if (input == 5 || input == 6) {
-						pauseMenu[1] = pauseMenu[0] + 1;
-						pauseMenu[0] = 0;
-					}
-
-					if (input == 3)
-						switch (pauseMenu[1]) {
-							case 1: optGlow[1] -= (optGlow[1] == 1 ? 0 : 1); break;
-							case 2: optGlow[2] -= (optGlow[2] == 0 ? 0 : 15); break;
-						}
-					if (input == 4)
-						switch (pauseMenu[1]) {
-							case 1: optGlow[1] += (optGlow[1] == 35 ? 0 : 1); break;
-							case 2: optGlow[2] += (optGlow[2] == 255 ? 0 : 15); break;
-						}
-
-					//Draw
-					PrintCenteredTTF(155, "Glow", FONTHEAD, 0x228B22FF);
-					GRRLIB_PrintfTTF(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "Factor 15", FONTOPT))/2,
-						200, myFont, "Factor", FONTOPT, 0xFFFFFFFF);
+				if(input == 3)
+					switch(pauseMenu[1])
 					{
-						char factor[8];
-						sprintf(factor, "%d", optGlow[1]);
-						GRRLIB_PrintfTTF(
-							(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "Factor 15", FONTOPT))/2
-								+ GRRLIB_WidthTTF(myFont, "Factor ", FONTOPT),
-							200, myFont, factor, FONTOPT, 0xFF0000FF);
+						case 1: optGlow[1] -= (optGlow[1] == 1 ? 0 : 1); break;
+						case 2: optGlow[2] -= (optGlow[2] == 0 ? 0 : 15); break;
 					}
-
-					drawSliderCaption(227, "Opacity", optGlow[2]);
-					GRRLIB_PrintfTTF(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2,
-						247, myFont, "[                  ]", FONTOPT, 0xFFFFFFFF);
-					GRRLIB_Rectangle(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-							+ GRRLIB_WidthTTF(myFont, "[", FONTOPT),
-						260,
-						(GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6)
-							* optGlow[2] / 255,
-						7, 0xFFFFFFFF, 1);
-
-					if (pauseMenu[1] == 2)
-						GRRLIB_PrintfTTF(
-							(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-								- MenuOffsets[4],
-							247, myFont, ">", (FONTHEAD + FONTOPT) / 2, 0xADFF2FFF);
-					else
-						GRRLIB_PrintfTTF(
-							(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "Factor 15", FONTOPT))/2
-								- MenuOffsets[4],
-							200, myFont, ">", (FONTHEAD + FONTOPT) / 2, 0xADFF2FFF);
-					break;
-				case 5: //Persistence
-					//Process input
-					if (input == 1) pauseMenu[1]--;
-					if (input == 2) pauseMenu[1]++;
-					if (pauseMenu[1] < 1) pauseMenu[1] = 3;
-					if (pauseMenu[1] > 3) pauseMenu[1] = 1;
-
-					//cursor lands back on this setting's own row
-					if (input == 5 || input == 6) {
-						pauseMenu[1] = pauseMenu[0] + 1;
-						pauseMenu[0] = 0;
-					}
-
-					if (input == 3)
-						switch (pauseMenu[1]) {
-							case 1: optPersistence[1] -= (optPersistence[1] == 1 ? 0 : 1); break;
-							case 2: optPersistence[2] -= (optPersistence[2] == 0 ? 0 : 15); break;
-							case 3: optPersistence[3] -= (optPersistence[3] == 0 ? 0 : 15); break;
-						}
-
-					if (input == 4)
-						switch (pauseMenu[1]) {
-							case 1: optPersistence[1] += (optPersistence[1] == 20 ? 0 : 1); break;
-							case 2: optPersistence[2] += (optPersistence[2] == 255 ? 0 : 15); break;
-							case 3: optPersistence[3] += (optPersistence[3] == 255 ? 0 : 15); break;
-						}
-
-					//Draw
-					PrintCenteredTTF(155, "Persistence", FONTHEAD, 0x228B22FF);
-					GRRLIB_PrintfTTF(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "Frames 15", FONTOPT))/2,
-						200, myFont, "Frames", FONTOPT, 0xFFFFFFFF);
+				if(input == 4)
+					switch(pauseMenu[1])
 					{
-						char frames[8];
-						sprintf(frames, "%d", optPersistence[1]);
-						GRRLIB_PrintfTTF(
-							(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "Frames 15", FONTOPT))/2
-								+ GRRLIB_WidthTTF(myFont, "Frames ", FONTOPT),
-							200, myFont, frames, FONTOPT, 0xFF0000FF);
-					}
-					drawSliderCaption(227, "Grayscale", optPersistence[2]);
-					GRRLIB_PrintfTTF(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2,
-						247, myFont, "[                  ]", FONTOPT,
-						RGBA(optPersistence[2], optPersistence[2], optPersistence[2], 0xFF));
-					GRRLIB_Rectangle(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-							+ GRRLIB_WidthTTF(myFont, "[", FONTOPT),
-						260,
-						(GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6)
-							* optPersistence[2] / 255,
-						7, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], 0xFF), 1);
-
-					drawSliderCaption(265, "Opacity", optPersistence[3]);
-					GRRLIB_PrintfTTF(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2,
-						285, myFont, "[                  ]", FONTOPT, 0xFFFFFFFF);
-					GRRLIB_Rectangle(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-							+ GRRLIB_WidthTTF(myFont, "[", FONTOPT),
-						298,
-						(GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6)
-							* optPersistence[3] / 255,
-						7, 0xFFFFFFFF, 1);
-
-					if (pauseMenu[1] == 2)
-						GRRLIB_PrintfTTF(
-							(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-								- MenuOffsets[4],
-							247, myFont, ">", (FONTHEAD + FONTOPT) / 2, 0xADFF2FFF);
-					else if (pauseMenu[1] == 3)
-						GRRLIB_PrintfTTF(
-							(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-								- MenuOffsets[4],
-							285, myFont, ">", (FONTHEAD + FONTOPT) / 2, 0xADFF2FFF);
-					else
-						GRRLIB_PrintfTTF(
-							(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "Frames 15", FONTOPT))/2
-								- MenuOffsets[4],
-							200, myFont, ">", (FONTHEAD + FONTOPT) / 2, 0xADFF2FFF);
-					break;
-				case 6: //Screen Size (overscan correction)
-					//Process input
-					if (input == 3) optScreenSize -= (optScreenSize <= 150 ? 0 : 15);
-					if (input == 4) optScreenSize += (optScreenSize >= 255 ? 0 : 15);
-					//cursor lands back on this setting's own row
-					if (input == 5 || input == 6) {
-						pauseMenu[1] = pauseMenu[0] + 1;
-						pauseMenu[0] = 0;
+						case 1: optGlow[1] += (optGlow[1] == 35 ? 0 : 1); break;
+						case 2: optGlow[2] += (optGlow[2] == 255 ? 0 : 15); break;
 					}
 
-					//Draw
-					PrintCenteredTTF(155, "Screen Size", FONTHEAD, 0x228B22FF);
-					drawSliderCaption(215, "Size", optScreenSize);
-					GRRLIB_PrintfTTF(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2,
-						240, myFont, "[                  ]", FONTOPT, 0xFFFFFFFF);
-					GRRLIB_Rectangle(
-						(rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2
-							+ GRRLIB_WidthTTF(myFont, "[", FONTOPT),
-						253,
-						(GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6)
-							* optScreenSize / 255,
-						7, 0xFFFFFFFF, 1);
-					break;
-				case 7: //Edit Controls
+			//Draw
+				PrintCenteredTTF(155, "Glow", FONTHEAD, 0x228B22FF);
+				GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont,"Factor 15", FONTOPT))/2, 200, myFont,"Factor", FONTOPT, 0xFFFFFFFF);
 				{
-					//1-4, which Vectrex button is being viewed/edited (kept
-					//even while onDone, so Up returns to the right one)
-					u8 slot = pauseMenu[1];
-					u32 *map = schemeButtonMap(joystick);
+					char factor[8];
+					sprintf(factor, "%d", optGlow[1]);
+					GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont,"Factor 15", FONTOPT))/2 + GRRLIB_WidthTTF(myFont,"Factor ", FONTOPT), 200, myFont, factor, FONTOPT, 0xFF0000FF);
+				}
 
-					//Process input
-					if (!remapWaiting) {
-						//any fresh input dismisses the warning so editing isn't blocked
-						if (input) warnUnmapped = 0;
+				drawSliderCaption(227, "Opacity", optGlow[2]);
+				GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2, 247, myFont, "[                  ]", FONTOPT, 0xFFFFFFFF);
+				GRRLIB_Rectangle( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2 + GRRLIB_WidthTTF(myFont, "[", FONTOPT) , 260, (GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6) * optGlow[2] / 255 , 7, 0xFFFFFFFF, 1);
 
-						if (!onDone) {
-							//slots are laid out left-to-right in the diagram, so
-							//cycling them is Left/Right (input 3/4), not Up/Down
-							if (input == 3) pauseMenu[1]--;
-							if (input == 4) pauseMenu[1]++;
-							if (pauseMenu[1] < 1) pauseMenu[1] = 4;
-							if (pauseMenu[1] > 4) pauseMenu[1] = 1;
-							slot = pauseMenu[1];
-
-							if (input == 2) onDone = 1; //Down off the slot row onto Done
-							if (input == 5) {
-								remapWaiting = 1;
-								remapFlashOn = 1;
-								remapFlashT0 = gettime();
-							}
-						} else {
-							if (input == 1) onDone = 0; //Up back onto the slot row
-						}
-
-						if (input == 6 || (onDone && input == 5)) { //Home/Start, or confirming Done
-							int mi, allMapped = 1;
-							for (mi = 0; mi < 4; mi++)
-								if (map[mi] == 0) allMapped = 0;
-							if (allMapped) {
-								controlsFree();
-								onDone = 0;
-								suppressPeek = 1;
-								pauseMenu[1] = pauseMenu[0] + 1;
-								pauseMenu[0] = 0;
-							} else
-								warnUnmapped = 1;
-						}
-					} else {
-						u32 mask = (joystick == JOY_GC)        ? REMAP_GC_MASK
-						           : (joystick == JOY_NUNCHUK) ? REMAP_NUNCHUK_MASK
-						           : (joystick == JOY_CLASSIC) ? REMAP_CLASSIC_MASK
-						                                       : REMAP_WII_MASK;
-						u32 raw = (joystick == JOY_GC) ? PAD_ButtonsDown(0) : WPAD_ButtonsDown(0);
-						u32 pressed = raw & mask;
-						//isolate one bit, in case several land on the same frame
-						pressed &= (0 - pressed);
-
-						if (pressed) {
-							int i;
-							//no two Vectrex buttons share one physical button
-							for (i = 0; i < 4; i++)
-								if (i != slot - 1 && map[i] == pressed) map[i] = 0;
-							map[slot - 1] = pressed;
-							remapWaiting = 0;
-						} else if (input == 6) {
-							remapWaiting = 0; //cancel without assigning
-						}
-
-						//slow on/off flash, deliberately not fast
-						//enough to bother anyone sensitive to it
-						if (ticks_to_millisecs(gettime() - remapFlashT0) >= 500) {
-							remapFlashOn ^= 1;
-							remapFlashT0 = gettime();
-						}
+				if(pauseMenu[1] == 2) GRRLIB_PrintfTTF((rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2-MenuOffsets[4], 247, myFont,">", (FONTHEAD+FONTOPT)/2,0xADFF2FFF);
+				else GRRLIB_PrintfTTF((rmode->fbWidth-GRRLIB_WidthTTF(myFont,"Factor 15", FONTOPT))/2-MenuOffsets[4], 200, myFont,">", (FONTHEAD+FONTOPT)/2,0xADFF2FFF);
+			break;
+			case 5: //Persistence
+			//Process input
+				if(input == 1) pauseMenu[1]--;	if(input == 2) pauseMenu[1]++;
+				if(pauseMenu[1] < 1) pauseMenu[1] = 3; if(pauseMenu[1] > 3) pauseMenu[1] = 1;
+				
+				if(input == 5 || input == 6){ pauseMenu[1] = pauseMenu[0] + 1; pauseMenu[0] = 0;} //cursor lands back on this setting's own row
+				if(input == 3)
+					switch(pauseMenu[1])
+					{
+						case 1: optPersistence[1] -= (optPersistence[1] == 1 ? 0 : 1); break;
+						case 2: optPersistence[2] -= (optPersistence[2] == 0 ? 0 : 15); break;
+						case 3: optPersistence[3] -= (optPersistence[3] == 0 ? 0 : 15); break;
 					}
 
-					//Draw -- this page gets its own box, sized and centred for its own content
-					//(diagram + Done + hint line) rather than reusing the shared one above, which
-					//is sized for the plain option rows and would leave this content off-centre.
-					//Gated on pauseMenu[0] still being 7: confirming Done above can jump it back
-					//to 0 for the main menu, but this whole case body keeps running for the rest
-					//of the frame regardless -- without this check the hint line briefly redraws
-					//with the just-reset onDone/warnUnmapped state, flashing "Press any button to
-					//remap" back up for one frame on the way out.
-					if (pauseMenu[0] == 7) {
-						//42-438 is centred on the screen's midline (240)
-						GRRLIB_Rectangle(0, 42, rmode->fbWidth, 438 - 42, 0x000000D0, 1);
-						PrintCenteredTTF(50, "Edit Controls", FONTHEAD, 0x228B22FF);
-						{
-							f32 s = 0.8f;
-							int imgX = (int)((rmode->fbWidth - 450 * s) / 2);
-							int imgY = 110;
-							u8 showGlow = !onDone && (!remapWaiting || remapFlashOn);
-							GRRLIB_texImg *img = showGlow ? btnmapSelect[slot - 1] : btnmapBase;
-							//circle centers in the 450x250 source image (canvas is padded
-							//to 452x252 for GX 4x4 tile alignment, art itself is unchanged)
-							static const int cx[4] = {187, 256, 325, 394};
-							int b;
+				if(input == 4)
+					switch(pauseMenu[1])
+					{
+						case 1: optPersistence[1] += (optPersistence[1] == 20 ? 0 : 1); break;
+						case 2: optPersistence[2] += (optPersistence[2] == 255 ? 0 : 15); break;
+						case 3: optPersistence[3] += (optPersistence[3] == 255 ? 0 : 15); break;
+					}
+			
+			//Draw
+				PrintCenteredTTF(155, "Persistence", FONTHEAD, 0x228B22FF);
+				GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont,"Frames 15", FONTOPT))/2, 200, myFont,"Frames", FONTOPT, 0xFFFFFFFF);
+				{
+					char frames[8];
+					sprintf(frames, "%d", optPersistence[1]);
+					GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont,"Frames 15", FONTOPT))/2 + GRRLIB_WidthTTF(myFont,"Frames ", FONTOPT), 200, myFont, frames, FONTOPT, 0xFF0000FF);
+				}
+				drawSliderCaption(227, "Grayscale", optPersistence[2]);
+				GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2, 247, myFont, "[                  ]", FONTOPT, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], 0xFF));
+				GRRLIB_Rectangle( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2 + GRRLIB_WidthTTF(myFont, "[", FONTOPT) , 260, (GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6) * optPersistence[2] / 255 , 7, RGBA(optPersistence[2], optPersistence[2], optPersistence[2], 0xFF), 1);
 
-							if (img != NULL) GRRLIB_DrawImg(imgX, imgY, img, 0, s, s, 0xFFFFFFFF);
+				drawSliderCaption(265, "Opacity", optPersistence[3]);
+				GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2, 285, myFont, "[                  ]", FONTOPT, 0xFFFFFFFF);
+				GRRLIB_Rectangle( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2 + GRRLIB_WidthTTF(myFont, "[", FONTOPT) , 298, (GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6) * optPersistence[3] / 255 , 7, 0xFFFFFFFF, 1);
+				
+				if(pauseMenu[1] == 2) GRRLIB_PrintfTTF((rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2-MenuOffsets[4], 247, myFont,">", (FONTHEAD+FONTOPT)/2,0xADFF2FFF);
+				else if(pauseMenu[1] == 3) GRRLIB_PrintfTTF((rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2-MenuOffsets[4], 285, myFont,">", (FONTHEAD+FONTOPT)/2,0xADFF2FFF);
+				else GRRLIB_PrintfTTF((rmode->fbWidth-GRRLIB_WidthTTF(myFont,"Frames 15", FONTOPT))/2-MenuOffsets[4], 200, myFont,">", (FONTHEAD+FONTOPT)/2,0xADFF2FFF);
+			break;
+			case 6: //Screen Size (overscan correction)
+			//Process input
+				if(input == 3) optScreenSize -= (optScreenSize <= 150 ? 0 : 15);
+				if(input == 4) optScreenSize += (optScreenSize >= 255 ? 0 : 15);
+				if(input == 5 || input == 6) {pauseMenu[1] = pauseMenu[0] + 1; pauseMenu[0] = 0;} //cursor lands back on this setting's own row
 
-							for (b = 0; b < 4; b++) {
-								const char *label = (remapWaiting && !onDone && b == slot - 1)
-								                        ? ""
-								                        : buttonLabel(joystick, map[b]);
-								if (label[0] != '\0') {
-									//+2 is an empirical nudge: the ink-centring math checks out
-									//exactly against both GRRLIB's own draw formula and the real
-									//font's glyph metrics, but it still renders a couple of px left
-									//of centre in practice -- reported directly against the in-game
-									//render, so correcting for it here rather than the math.
-									int tx = imgX + (int)(cx[b] * s) + 2,
-									    ty = imgY + (int)(125 * s);
-									PrintInkCenteredAt(tx, ty, label, FONTOPT, 0x228B22FF);
-								}
+			//Draw
+				PrintCenteredTTF(155, "Screen Size", FONTHEAD, 0x228B22FF);
+				drawSliderCaption(215, "Size", optScreenSize);
+				GRRLIB_PrintfTTF( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2, 240, myFont, "[                  ]", FONTOPT, 0xFFFFFFFF);
+				GRRLIB_Rectangle( (rmode->fbWidth-GRRLIB_WidthTTF(myFont, "[                  ]", FONTOPT))/2 + GRRLIB_WidthTTF(myFont, "[", FONTOPT) , 253, (GRRLIB_WidthTTF(myFont, "                  ", FONTOPT) - 6) * optScreenSize / 255 , 7, 0xFFFFFFFF, 1);
+			break;
+			case 7: //Edit Controls
+			{
+				u8 slot = pauseMenu[1]; //1-4, which Vectrex button is being viewed/edited (kept even while onDone, so Up returns to the right one)
+				u32 *map = schemeButtonMap(joystick);
+
+			//Process input
+				if(!remapWaiting){
+					if(input) warnUnmapped = 0; //any fresh input dismisses the warning so editing isn't blocked
+
+					if(!onDone){
+						//slots are laid out left-to-right in the diagram, so cycling them is Left/Right (input 3/4), not Up/Down
+						if(input == 3) pauseMenu[1]--; if(input == 4) pauseMenu[1]++;
+						if(pauseMenu[1] < 1) pauseMenu[1] = 4; if(pauseMenu[1] > 4) pauseMenu[1] = 1;
+						slot = pauseMenu[1];
+
+						if(input == 2) onDone = 1; //Down off the slot row onto Done
+						if(input == 5) { remapWaiting = 1; remapFlashOn = 1; remapFlashT0 = gettime(); }
+					} else {
+						if(input == 1) onDone = 0; //Up back onto the slot row
+					}
+
+					if(input == 6 || (onDone && input == 5)){ //Home/Start, or confirming Done
+						int mi, allMapped = 1;
+						for(mi = 0; mi < 4; mi++) if(map[mi] == 0) allMapped = 0;
+						if(allMapped) { controlsFree(); onDone = 0; suppressPeek = 1; pauseMenu[1] = pauseMenu[0] + 1; pauseMenu[0] = 0; }
+						else warnUnmapped = 1;
+					}
+				} else {
+					u32 mask = (joystick == JOY_GC) ? REMAP_GC_MASK : (joystick == JOY_NUNCHUK) ? REMAP_NUNCHUK_MASK : (joystick == JOY_CLASSIC) ? REMAP_CLASSIC_MASK : REMAP_WII_MASK;
+					u32 raw  = (joystick == JOY_GC) ? PAD_ButtonsDown(0) : WPAD_ButtonsDown(0);
+					u32 pressed = raw & mask;
+					pressed &= (0 - pressed); //isolate one bit, in case several land on the same frame
+
+					if(pressed){
+						int i;
+						for(i = 0; i < 4; i++) if(i != slot - 1 && map[i] == pressed) map[i] = 0; //no two Vectrex buttons share one physical button
+						map[slot - 1] = pressed;
+						remapWaiting = 0;
+					} else if(input == 6) {
+						remapWaiting = 0; //cancel without assigning
+					}
+
+					//slow on/off flash, deliberately not fast enough to bother anyone sensitive to it
+					if(ticks_to_millisecs(gettime() - remapFlashT0) >= 500) { remapFlashOn ^= 1; remapFlashT0 = gettime(); }
+				}
+
+			//Draw -- this page gets its own box, sized and centred for its own content
+			//(diagram + Done + hint line) rather than reusing the shared one above, which
+			//is sized for the plain option rows and would leave this content off-centre.
+			//Gated on pauseMenu[0] still being 7: confirming Done above can jump it back
+			//to 0 for the main menu, but this whole case body keeps running for the rest
+			//of the frame regardless -- without this check the hint line briefly redraws
+			//with the just-reset onDone/warnUnmapped state, flashing "Press any button to
+			//remap" back up for one frame on the way out.
+				if(pauseMenu[0] == 7){
+					GRRLIB_Rectangle(0, 42, rmode->fbWidth, 438 - 42, 0x000000D0, 1); //42-438 is centred on the screen's midline (240)
+					PrintCenteredTTF(50, "Edit Controls", FONTHEAD, 0x228B22FF);
+					{
+						f32 s = 0.8f;
+						int imgX = (int)((rmode->fbWidth - 450 * s) / 2);
+						int imgY = 110;
+						u8 showGlow = !onDone && (!remapWaiting || remapFlashOn);
+						GRRLIB_texImg *img = showGlow ? btnmapSelect[slot - 1] : btnmapBase;
+						static const int cx[4] = {187, 256, 325, 394}; //circle centers in the 450x250 source image (canvas is padded to 452x252 for GX 4x4 tile alignment, art itself is unchanged)
+						int b;
+
+						if(img != NULL) GRRLIB_DrawImg(imgX, imgY, img, 0, s, s, 0xFFFFFFFF);
+
+						for(b = 0; b < 4; b++){
+							const char *label = (remapWaiting && !onDone && b == slot - 1) ? "" : buttonLabel(joystick, map[b]);
+							if(label[0] != '\0'){
+								//+2 is an empirical nudge: the ink-centring math checks out exactly against
+								//both GRRLIB's own draw formula and the real font's glyph metrics, but it
+								//still renders a couple of px left of centre in practice -- reported directly
+								//against the in-game render, so correcting for it here rather than the math.
+								int tx = imgX + (int)(cx[b] * s) + 2, ty = imgY + (int)(125 * s);
+								PrintInkCenteredAt(tx, ty, label, FONTOPT, 0x228B22FF);
 							}
 						}
-						PrintCenteredTTF(330, "Done", FONTOPT, onDone ? 0xFFFFFFFF : 0x228B22FF);
+					}
+					PrintCenteredTTF(330, "Done", FONTOPT, onDone ? 0xFFFFFFFF : 0x228B22FF);
 
-						if (remapWaiting)
-							PrintCenteredTTF(375, "Press any button...", FONTOPT, 0xFFFFFFFF);
-						else if (warnUnmapped)
-							PrintCenteredTTF(375, "Not all buttons are mapped!", FONTOPT,
-							                 0xFF3030FF);
-						else if (!onDone)
-							PrintCenteredTTF(375, "Press any button to remap", FONTOPT, 0xFFFFFFFF);
+					if(remapWaiting) PrintCenteredTTF(375, "Press any button...", FONTOPT, 0xFFFFFFFF);
+					else if(warnUnmapped) PrintCenteredTTF(375, "Not all buttons are mapped!", FONTOPT, 0xFF3030FF);
+					else if(!onDone) PrintCenteredTTF(375, "Press any button to remap", FONTOPT, 0xFFFFFFFF);
+				}
+			}
+			break;
+			default: //Main pause menu
+
+			//Input processing
+				if (input == 1) pauseMenu[1]--;	if (input == 2) pauseMenu[1]++;
+				{
+					/* the title-screen version has no "Resume Game" row, so it
+					 * starts at 2. only wrap on an actual up-press -- landing
+					 * here at 1 after closing a sub-page must clamp, not jump.
+					 */
+					u8 lo = settingsFromTitle ? 2 : 1;
+					if(pauseMenu[1] < lo) pauseMenu[1] = (input == 1) ? 9 : lo;
+					if(pauseMenu[1] > 9) pauseMenu[1] = lo;
+				}
+
+				if(input == 3 || input == 4){
+					switch(pauseMenu[1]){
+						case 2: joystickAutoOK = 0; joystickCycle(expType, gcConnected, input == 3 ? -1 : 1); break;
+						case 3:	optOverlay[0] ^= 1; break;
+						case 4: optVtxCustomColor[0] ^= 1; break;
+						case 5:	optGlow[0] ^= 1; break;
+						case 6: optPersistence[0] ^= 1; break;
 					}
 				}
-				break;
-				default: //Main pause menu
 
-					//Input processing
-					if (input == 1) pauseMenu[1]--;
-					if (input == 2) pauseMenu[1]++;
-					{
-						/* the title-screen version has no "Resume Game" row, so it
-						 * starts at 2. only wrap on an actual up-press -- landing
-						 * here at 1 after closing a sub-page must clamp, not jump.
-						 */
-						u8 lo = settingsFromTitle ? 2 : 1;
-						if (pauseMenu[1] < lo) pauseMenu[1] = (input == 1) ? 9 : lo;
-						if (pauseMenu[1] > 9) pauseMenu[1] = lo;
+				if(input == 5){
+					switch(pauseMenu[1]){
+						case 1: if(!settingsFromTitle) emustatus = 1; break;
+						//case 2 (Joystick) is a plain toggle, it has no sub-page
+						case 3:	pauseMenu[0] = 2; break;
+						case 4: pauseMenu[0] = 3; break;
+						case 5:	pauseMenu[0] = 4; break;
+						case 6: pauseMenu[0] = 5; break;
+						case 7: pauseMenu[0] = 6; break;
+						case 8: pauseMenu[0] = 7; remapWaiting = 0; warnUnmapped = 0; onDone = 0; controlsLoad(); break;
+						case 9: if(settingsFromTitle) { settingsFromTitle = 0; previewFree(); } else emustatus = 0; break;
 					}
+					 pauseMenu[1] = 1; //sub-pages use this as their own cursor
+				}
 
-					if (input == 3 || input == 4) {
-						switch (pauseMenu[1]) {
-							case 2:
-								joystickAutoOK = 0;
-								joystickCycle(expType, gcConnected, input == 3 ? -1 : 1);
-								break;
-							case 3: optOverlay[0] ^= 1; break;
-							case 4: optVtxCustomColor[0] ^= 1; break;
-							case 5: optGlow[0] ^= 1; break;
-							case 6: optPersistence[0] ^= 1; break;
-						}
-					}
+				if(input == 6){
+					if(settingsFromTitle) { settingsFromTitle = 0; previewFree(); } //HOME backs out to the title menu
+					else pauseMenu[1] = 1;
+				}
+				
+			//Drawing
+				if(settingsFromTitle) PrintCenteredTTF(155, "Settings", FONTHEAD, 0x228B22FF);
+				else GRRLIB_PrintfTTF( MenuOffsets[0], 155, myFont,"Resume Game",FONTHEAD, 0x228B22FF);
+				GRRLIB_PrintfTTF( MenuOffsets[2], 176, myFont,"Joystick", FONTOPT,0xFFFFFFFF);
+				GRRLIB_PrintfTTF( MenuOffsets[2], 194, myFont,"Overlay", FONTOPT,0xFFFFFFFF);
+				GRRLIB_PrintfTTF( MenuOffsets[2], 212, myFont,"Custom Color", FONTOPT,0xFFFFFFFF);
+				GRRLIB_PrintfTTF( MenuOffsets[2], 230, myFont,"Glow", FONTOPT,0xFFFFFFFF);
+				GRRLIB_PrintfTTF( MenuOffsets[2], 248, myFont,"Persistence", FONTOPT,0xFFFFFFFF);
+				GRRLIB_PrintfTTF( MenuOffsets[2], 266, myFont,"Screen Size", FONTOPT,0xFFFFFFFF);
+				PrintCenteredTTF(284, "Edit Controls", FONTHEAD, 0x228B22FF); //an action row like Resume/Settings and Turn Off/Back, not a toggle like its neighbours -- styled to match them
+				if(settingsFromTitle) PrintCenteredTTF(306, "Back", FONTHEAD, 0xFF0000FF);
+				else GRRLIB_PrintfTTF( MenuOffsets[1], 306, myFont,"Turn vectrex OFF", FONTHEAD,0xFF0000FF);
 
-					if (input == 5) {
-						switch (pauseMenu[1]) {
-							case 1:
-								if (!settingsFromTitle) emustatus = 1;
-								break;
-							//case 2 (Joystick) is a plain toggle, it has no sub-page
-							case 3: pauseMenu[0] = 2; break;
-							case 4: pauseMenu[0] = 3; break;
-							case 5: pauseMenu[0] = 4; break;
-							case 6: pauseMenu[0] = 5; break;
-							case 7: pauseMenu[0] = 6; break;
-							case 8:
-								pauseMenu[0] = 7;
-								remapWaiting = 0;
-								warnUnmapped = 0;
-								onDone = 0;
-								controlsLoad();
-								break;
-							case 9:
-								if (settingsFromTitle) {
-									settingsFromTitle = 0;
-									previewFree();
-								} else
-									emustatus = 0;
-								break;
-						}
-						pauseMenu[1] = 1; //sub-pages use this as their own cursor
-					}
+				if (joystick == JOY_WII) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 176, myFont,"[Wii]", FONTOPT, 0xADFF2FFF);
+				else if (joystick == JOY_NUNCHUK) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 176, myFont,"[Nunchuk]", FONTOPT, 0xADFF2FFF);
+				else if (joystick == JOY_CLASSIC) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 176, myFont,"[Classic]", FONTOPT, 0xADFF2FFF);
+				else GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 176, myFont,"[GC]", FONTOPT, 0xADFF2FFF);
 
-					if (input == 6) {
-						//HOME backs out to the title menu
-						if (settingsFromTitle) {
-							settingsFromTitle = 0;
-							previewFree();
-						} else
-							pauseMenu[1] = 1;
-					}
+				if (optOverlay[0]) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 194, myFont,"[ON]", FONTOPT, 0xADFF2FFF);
+				else GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3],194, myFont,"[OFF]", FONTOPT, 0xADFF2FFF);
 
-					//Drawing
-					if (settingsFromTitle)
-						PrintCenteredTTF(155, "Settings", FONTHEAD, 0x228B22FF);
-					else
-						GRRLIB_PrintfTTF(MenuOffsets[0], 155, myFont, "Resume Game", FONTHEAD,
-						                 0x228B22FF);
-					GRRLIB_PrintfTTF(MenuOffsets[2], 176, myFont, "Joystick", FONTOPT, 0xFFFFFFFF);
-					GRRLIB_PrintfTTF(MenuOffsets[2], 194, myFont, "Overlay", FONTOPT, 0xFFFFFFFF);
-					GRRLIB_PrintfTTF(MenuOffsets[2], 212, myFont, "Custom Color", FONTOPT, 0xFFFFFFFF);
-					GRRLIB_PrintfTTF(MenuOffsets[2], 230, myFont, "Glow", FONTOPT, 0xFFFFFFFF);
-					GRRLIB_PrintfTTF(MenuOffsets[2], 248, myFont, "Persistence", FONTOPT, 0xFFFFFFFF);
-					GRRLIB_PrintfTTF(MenuOffsets[2], 266, myFont, "Screen Size", FONTOPT, 0xFFFFFFFF);
-					//an action row like Resume/Settings and Turn Off/Back,
-					//not a toggle like its neighbours -- styled to match them
-					PrintCenteredTTF(284, "Edit Controls", FONTHEAD, 0x228B22FF);
-					if (settingsFromTitle)
-						PrintCenteredTTF(306, "Back", FONTHEAD, 0xFF0000FF);
-					else
-						GRRLIB_PrintfTTF(MenuOffsets[1], 306, myFont, "Turn vectrex OFF", FONTHEAD,
-						                 0xFF0000FF);
+				if(optVtxCustomColor[0]) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 212, myFont,"[ON]", FONTOPT, 0xADFF2FFF);
+				else GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 212, myFont,"[OFF]", FONTOPT, 0xADFF2FFF);
 
-					if (joystick == JOY_WII)
-						GRRLIB_PrintfTTF(MenuOffsets[2] + MenuOffsets[3], 176, myFont, "[Wii]",
-						                 FONTOPT, 0xADFF2FFF);
-					else if (joystick == JOY_NUNCHUK)
-						GRRLIB_PrintfTTF(MenuOffsets[2] + MenuOffsets[3], 176, myFont, "[Nunchuk]",
-						                 FONTOPT, 0xADFF2FFF);
-					else if (joystick == JOY_CLASSIC)
-						GRRLIB_PrintfTTF(MenuOffsets[2] + MenuOffsets[3], 176, myFont, "[Classic]",
-						                 FONTOPT, 0xADFF2FFF);
-					else
-						GRRLIB_PrintfTTF(MenuOffsets[2] + MenuOffsets[3], 176, myFont, "[GC]",
-						                 FONTOPT, 0xADFF2FFF);
+				if (optGlow[0]) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 230, myFont,"[ON]", FONTOPT, 0xADFF2FFF);
+				else GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 230, myFont,"[OFF]", FONTOPT, 0xADFF2FFF);
 
-					if (optOverlay[0])
-						GRRLIB_PrintfTTF(MenuOffsets[2] + MenuOffsets[3], 194, myFont, "[ON]",
-						                 FONTOPT, 0xADFF2FFF);
-					else
-						GRRLIB_PrintfTTF(MenuOffsets[2] + MenuOffsets[3], 194, myFont, "[OFF]",
-						                 FONTOPT, 0xADFF2FFF);
+				if (optPersistence[0]) GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 248, myFont,"[ON]", FONTOPT, 0xADFF2FFF);
+				else GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 248, myFont,"[OFF]", FONTOPT, 0xADFF2FFF);
 
-					if (optVtxCustomColor[0])
-						GRRLIB_PrintfTTF(MenuOffsets[2] + MenuOffsets[3], 212, myFont, "[ON]",
-						                 FONTOPT, 0xADFF2FFF);
-					else
-						GRRLIB_PrintfTTF(MenuOffsets[2] + MenuOffsets[3], 212, myFont, "[OFF]",
-						                 FONTOPT, 0xADFF2FFF);
+				{
+					char sizebuf[8];
+					sprintf(sizebuf, "[%d%%]", optScreenSize * 100 / 255);
+					GRRLIB_PrintfTTF( MenuOffsets[2]+MenuOffsets[3], 266, myFont, sizebuf, FONTOPT, 0xADFF2FFF);
+				}
 
-					if (optGlow[0])
-						GRRLIB_PrintfTTF(MenuOffsets[2] + MenuOffsets[3], 230, myFont, "[ON]",
-						                 FONTOPT, 0xADFF2FFF);
-					else
-						GRRLIB_PrintfTTF(MenuOffsets[2] + MenuOffsets[3], 230, myFont, "[OFF]",
-						                 FONTOPT, 0xADFF2FFF);
+				if(pauseMenu[1] == 1) { if(!settingsFromTitle) GRRLIB_PrintfTTF(MenuOffsets[0]-MenuOffsets[4], 155, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF); }
+				else if(pauseMenu[1] == 2) GRRLIB_PrintfTTF(MenuOffsets[2]-MenuOffsets[4], 176, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
+				else if(pauseMenu[1] == 3) GRRLIB_PrintfTTF(MenuOffsets[2]-MenuOffsets[4], 194, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
+				else if(pauseMenu[1] == 4) GRRLIB_PrintfTTF(MenuOffsets[2]-MenuOffsets[4], 212, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
+				else if(pauseMenu[1] == 5) GRRLIB_PrintfTTF(MenuOffsets[2]-MenuOffsets[4], 230, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
+				else if(pauseMenu[1] == 6) GRRLIB_PrintfTTF(MenuOffsets[2]-MenuOffsets[4], 248, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
+				else if(pauseMenu[1] == 7) GRRLIB_PrintfTTF(MenuOffsets[2]-MenuOffsets[4], 266, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
+				else if(pauseMenu[1] == 8) GRRLIB_PrintfTTF(centerXTTF("Edit Controls", FONTHEAD)-MenuOffsets[4], 284, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
+				else GRRLIB_PrintfTTF(MenuOffsets[1]-MenuOffsets[4], 306, myFont,">", (FONTHEAD+FONTOPT)/2,0xFF0000FF);
 
-					if (optPersistence[0])
-						GRRLIB_PrintfTTF(MenuOffsets[2] + MenuOffsets[3], 248, myFont, "[ON]",
-						                 FONTOPT, 0xADFF2FFF);
-					else
-						GRRLIB_PrintfTTF(MenuOffsets[2] + MenuOffsets[3], 248, myFont, "[OFF]",
-						                 FONTOPT, 0xADFF2FFF);
-
-					{
-						char sizebuf[8];
-						sprintf(sizebuf, "[%d%%]", optScreenSize * 100 / 255);
-						GRRLIB_PrintfTTF(MenuOffsets[2] + MenuOffsets[3], 266, myFont, sizebuf,
-						                 FONTOPT, 0xADFF2FFF);
-					}
-
-					if (pauseMenu[1] == 1) {
-						if (!settingsFromTitle)
-							GRRLIB_PrintfTTF(MenuOffsets[0] - MenuOffsets[4], 155, myFont, ">",
-							                 (FONTHEAD + FONTOPT) / 2, 0xFF0000FF);
-					} else if (pauseMenu[1] == 2)
-						GRRLIB_PrintfTTF(MenuOffsets[2] - MenuOffsets[4], 176, myFont, ">",
-						                 (FONTHEAD + FONTOPT) / 2, 0xFF0000FF);
-					else if (pauseMenu[1] == 3)
-						GRRLIB_PrintfTTF(MenuOffsets[2] - MenuOffsets[4], 194, myFont, ">",
-						                 (FONTHEAD + FONTOPT) / 2, 0xFF0000FF);
-					else if (pauseMenu[1] == 4)
-						GRRLIB_PrintfTTF(MenuOffsets[2] - MenuOffsets[4], 212, myFont, ">",
-						                 (FONTHEAD + FONTOPT) / 2, 0xFF0000FF);
-					else if (pauseMenu[1] == 5)
-						GRRLIB_PrintfTTF(MenuOffsets[2] - MenuOffsets[4], 230, myFont, ">",
-						                 (FONTHEAD + FONTOPT) / 2, 0xFF0000FF);
-					else if (pauseMenu[1] == 6)
-						GRRLIB_PrintfTTF(MenuOffsets[2] - MenuOffsets[4], 248, myFont, ">",
-						                 (FONTHEAD + FONTOPT) / 2, 0xFF0000FF);
-					else if (pauseMenu[1] == 7)
-						GRRLIB_PrintfTTF(MenuOffsets[2] - MenuOffsets[4], 266, myFont, ">",
-						                 (FONTHEAD + FONTOPT) / 2, 0xFF0000FF);
-					else if (pauseMenu[1] == 8)
-						GRRLIB_PrintfTTF(centerXTTF("Edit Controls", FONTHEAD) - MenuOffsets[4],
-						                 284, myFont, ">", (FONTHEAD + FONTOPT) / 2, 0xFF0000FF);
-					else
-						GRRLIB_PrintfTTF(MenuOffsets[1] - MenuOffsets[4], 306, myFont, ">",
-						                 (FONTHEAD + FONTOPT) / 2, 0xFF0000FF);
-
-					break;
-			}
+			break;
 		}
+
+	}
 	}
 
 	GRRLIB_Render();
-}
+
+	}
 
 void osint_emuloop(){
+
 	u64 next_ticks = gettime();
 	vecx_reset();
 	sound_stop(); //fresh audio state for the new game
@@ -2204,19 +1727,10 @@ void osint_emuloop(){
 			{
 				static u32 skipped = 0;
 				u32 backlog = snd_widx - snd_ridx;
-				if(backlog > SND_CHUNK_SAMPLES * 4) {
-					renderThisFrame = 1;
-					skipped = 0;
-				} else if(skipped >= 3 && backlog > SND_CHUNK_SAMPLES * 2) {
-					renderThisFrame = 1;
-					skipped = 0;
-				} else if(skipped >= 25) {
-					renderThisFrame = 1;
-					skipped = 0;
-				} else {
-					renderThisFrame = 0;
-					skipped++;
-				}
+				if(backlog > SND_CHUNK_SAMPLES * 4) { renderThisFrame = 1; skipped = 0; }
+				else if(skipped >= 3 && backlog > SND_CHUNK_SAMPLES * 2) { renderThisFrame = 1; skipped = 0; }
+				else if(skipped >= 25) { renderThisFrame = 1; skipped = 0; }
+				else { renderThisFrame = 0; skipped++; }
 			}
 #endif
 			vecx_emu((VECTREX_MHZ / 1000) * EMU_TIMER, 0);
@@ -2232,23 +1746,19 @@ void osint_emuloop(){
 		   * emulator always ran fast and bursty, which was also the old
 		   * "fullspeed for 5 seconds after pausing" mystery bug.)
 		   */
-			u64 now = gettime();
-			if(now < next_ticks)
-				usleep(ticks_to_microsecs(next_ticks - now));
-			else if(now - next_ticks > millisecs_to_ticks(200))
-				next_ticks = now; //fell way behind; resync instead of sprinting
-			next_ticks += millisecs_to_ticks(EMU_TIMER);
+				u64 now = gettime();
+				if(now < next_ticks)
+					usleep(ticks_to_microsecs(next_ticks - now));
+				else if(now - next_ticks > millisecs_to_ticks(200))
+					next_ticks = now; //fell way behind; resync instead of sprinting
+				next_ticks += millisecs_to_ticks(EMU_TIMER);
 		}
 	}
-
+	
 	//Vectrex turned off, get ready to load another game...
 	sound_stop(); //silence the menu
 	memset ( cart, 0, sizeof(cart)); //Empty the cartridge! to be able to play Minestorm if wanted
-	//Free the texture containing the overlay
-	if (overlay != NULL) {
-		GRRLIB_FreeTexture(overlay);
-		overlay = NULL;
-	}
+	if (overlay != NULL) { GRRLIB_FreeTexture(overlay); overlay = NULL; } //Free the texture containing the overlay
 
 	//Persistence clean up. Clearing the slots matters: a game quit before the
 	//ring had filled would otherwise leave freed pointers behind for the next
@@ -2260,10 +1770,10 @@ void osint_emuloop(){
 				free(vectors_pers[i]);
 				vectors_pers[i] = NULL;
 			}
-		persCycle = 0;
-		persFull = 0;
+		persCycle = 0; persFull = 0;
 	}
 }
+
 
 int main(int argc, char *argv[]){
 	GRRLIB_Init();
@@ -2285,19 +1795,18 @@ int main(int argc, char *argv[]){
 	 * black here, once, up front -- the freed-up margin then stays black
 	 * for the rest of the session without needing a per-frame clear. */
 	if (CONF_GetAspectRatio() == CONF_ASPECT_16_9) aspectCorrection = 3.0f / 4.0f;
-	GRRLIB_FillScreen(0x000000FF);
-	GRRLIB_Render();
-	GRRLIB_FillScreen(0x000000FF);
-	GRRLIB_Render();
+	GRRLIB_FillScreen(0x000000FF); GRRLIB_Render();
+	GRRLIB_FillScreen(0x000000FF); GRRLIB_Render();
 
 	//Load splashscreen, font and Minestorm
 	splash = GRRLIB_LoadTexture(splashscreen_png);
 	myFont = GRRLIB_LoadTTF(Font_ttf, Font_ttf_size);
-	memcpy (rom, rom_dat, sizeof(rom)); //Preloaded/Default ROM [Minestorm]
-
+	memcpy (rom, rom_dat, sizeof(rom));	 //Preloaded/Default ROM [Minestorm]	
+	
 	while(1) {
 		Menu();
-		osint_emuloop();
+		osint_emuloop(); 
 	}
-	return 0;
+	return 0;	
 }
+
