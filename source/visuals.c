@@ -102,15 +102,15 @@ void vbatch_line(f32 x1, f32 y1, f32 x2, f32 y2, u32 color)
  * pass, just no longer pinned to fully-opaque. */
 void blurDot(u16 x, u16 y, u16 factor, u16 lightf, u32 col)
 {
-int div, i, j, ui;
-u8 colors[3], a;
+	int div, i, j, ui;
+	u8 colors[3], a;
 
-colors[0] = R(col);
-colors[1] = G(col);
-colors[2] = B(col);
-a = A(col);
+	colors[0] = R(col);
+	colors[1] = G(col);
+	colors[2] = B(col);
+	a = A(col);
 
-div = 1 + (2 * lightf);
+	div = 1 + (2 * lightf);
 
 	for(i = -factor; i <= factor; i++)
 	{
@@ -127,24 +127,23 @@ div = 1 + (2 * lightf);
 
 void blurLine(u16 x1, u16 y1, u16 x2, u16 y2, u16 factor, u32 col)
 {
-s16 slope[2]={y1-y2, x1-x2};
-u16 i, div;
-u8 colors[3], a;
+	s16 slope[2]={y1-y2, x1-x2};
+	u16 i, div;
+	u8 colors[3], a;
 
-colors[0] = R(col);
-colors[1] = G(col);
-colors[2] = B(col);
-a = A(col);
+	colors[0] = R(col);
+	colors[1] = G(col);
+	colors[2] = B(col);
+	a = A(col);
 
-div = 1 + (2 * factor);
+	div = 1 + (2 * factor);
 
-vbatch_line(x1, y1, x2, y2, RGBA(0xFF, 0xFF, 0xFF, a));
+	vbatch_line(x1, y1, x2, y2, RGBA(0xFF, 0xFF, 0xFF, a));
 
 	if(slope[0] == 0) //blur vertically
 	{
 		for(i=1; i <= factor; i++)
 		{
-
 			vbatch_line(x1, y1-i, x2, y2-i, RGBA(colors[0]/div, colors[1]/div, colors[2]/div, a));
 			vbatch_line(x1, y1+i, x2, y2+i, RGBA(colors[0]/div, colors[1]/div, colors[2]/div, a));
 		}

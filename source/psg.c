@@ -86,7 +86,7 @@ int vecx_trace_env_holding = 0; /* has the envelope reached its hold state? */
 
 static einline void env_advance (void)
 {
-	unsigned shape    = snd_regs[13];
+	unsigned shape     = snd_regs[13];
 	unsigned attack    = (shape & 0x04) != 0;
 	unsigned alternate = (shape & 0x02) != 0;
 	unsigned hold      = (shape & 0x01) != 0;
@@ -114,7 +114,8 @@ static einline void env_advance (void)
 	}
 
 	env_level = env_holding ? env_hold_level
-	          : ((attack ^ env_dir_invert) ? (unsigned) env_step : (ENV_STEPS - 1 - (unsigned) env_step));
+	          : ((attack ^ env_dir_invert) ? (unsigned) env_step
+	                                       : (ENV_STEPS - 1 - (unsigned) env_step));
 
 #ifdef VECX_TRACE
 	vecx_trace_env_level = (int) env_level;
@@ -135,7 +136,8 @@ static einline long mix_channels (void)
 
 	for (ch = 0; ch < 3; ch++) {
 		unsigned amp = snd_regs[8 + ch];
-		unsigned level = (amp & 0x10) ? (unsigned) env_table[env_level] : (unsigned) vol_table[amp & 0x0f];
+		unsigned level = (amp & 0x10) ? (unsigned) env_table[env_level]
+		                              : (unsigned) vol_table[amp & 0x0f];
 		unsigned tone_term  = (mixer & (1u << ch))       ? 1u : tone_out[ch];
 		unsigned noise_term = (mixer & (1u << (ch + 3))) ? 1u : noise_out;
 
@@ -186,19 +188,30 @@ static einline void emit_sample (long sum)
  * (via psg_env_restart) mutates -- lets the differential tester roll the PSG
  * back after the reference core executes an instruction.
  */
-static struct { long env_counter; int env_step; unsigned env_holding,
-	env_hold_level, env_dir_invert, env_level; } psgsav;
+static struct {
+	long env_counter;
+	int env_step;
+	unsigned env_holding, env_hold_level, env_dir_invert, env_level;
+} psgsav;
+
 void psg_snapshot (void)
 {
-	psgsav.env_counter = env_counter; psgsav.env_step = env_step;
-	psgsav.env_holding = env_holding; psgsav.env_hold_level = env_hold_level;
-	psgsav.env_dir_invert = env_dir_invert; psgsav.env_level = env_level;
+	psgsav.env_counter = env_counter;
+	psgsav.env_step = env_step;
+	psgsav.env_holding = env_holding;
+	psgsav.env_hold_level = env_hold_level;
+	psgsav.env_dir_invert = env_dir_invert;
+	psgsav.env_level = env_level;
 }
+
 void psg_restore (void)
 {
-	env_counter = psgsav.env_counter; env_step = psgsav.env_step;
-	env_holding = psgsav.env_holding; env_hold_level = psgsav.env_hold_level;
-	env_dir_invert = psgsav.env_dir_invert; env_level = psgsav.env_level;
+	env_counter = psgsav.env_counter;
+	env_step = psgsav.env_step;
+	env_holding = psgsav.env_holding;
+	env_hold_level = psgsav.env_hold_level;
+	env_dir_invert = psgsav.env_dir_invert;
+	env_level = psgsav.env_level;
 }
 #endif
 

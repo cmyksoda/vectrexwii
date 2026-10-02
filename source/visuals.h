@@ -12,7 +12,8 @@ void vbatch_point(f32 x, f32 y, u32 color);
 void vbatch_line(f32 x1, f32 y1, f32 x2, f32 y2, u32 color);
 void vbatch_flush(void);
 
-//wii_vector_type is exactly the same but using smaller variables to hold the coordinates and it does not store the color
+//wii_vector_type is exactly the same but using smaller variables to hold the
+//coordinates and it does not store the color
 typedef struct wii_vector_type {
 	u16 x0, y0; /* computed start coordinate (on wiis resolution)*/
 	u16 x1, y1; /* computed end coordinate (on wiis resolution)*/
@@ -22,9 +23,14 @@ wii_vector_t * vectors_pers[PERSFRAMES + 1];
 long vector_pers_cnt[PERSFRAMES + 1];
 
 u8 persFull = 0, persCycle = 0;
-u8 optOverlay[2] = {1, 90}; //Enabled and opacity/alpha (90/255 = 35%)
-u8 optPersistence[4] = {1, 2, 90, 135}; //Enabled, persistent frames, Grayscale (35%) and opacity/alpha (52%)
-u8 optVtxCustomColor[4] = {1, 255, 255, 255}; //Enabled and RGB components of the custom color
-u8 optGlow[3] = {1, 3, 90}; //Enabled, blur factor, opacity/alpha (90/255 = 35%)
-u8 optScreenSize = 255; //Overscan correction: 255 = full, lower scales the picture down toward center
+//Enabled and opacity/alpha (90/255 = 35%)
+u8 optOverlay[2] = {1, 90};
+//Enabled, persistent frames, Grayscale (35%) and opacity/alpha (52%)
+u8 optPersistence[4] = {1, 2, 90, 135};
+//Enabled and RGB components of the custom color
+u8 optVtxCustomColor[4] = {1, 255, 255, 255};
+//Enabled, blur factor, opacity/alpha (90/255 = 35%)
+u8 optGlow[3] = {1, 3, 90};
+//Overscan correction: 255 = full, lower scales the picture down toward center
+u8 optScreenSize = 255;
 u8 pauseMenu[2] = {0, 1};
