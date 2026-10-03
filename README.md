@@ -21,3 +21,7 @@ If you don't want to use the included boot.dol on the releases page, you can bui
 
 ## Wiibrew page
 Wiki info is available [here](http://wiibrew.org/wiki/VectrexWii).
+
+---
+
+*This project was made with AI assistance. For more information, see [my AI usage statement](https://github.com/cmyksoda/cmyksoda/blob/main/AI_USAGE.md).*
