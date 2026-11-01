@@ -18,7 +18,7 @@ include $(DEVKITPPC)/wii_rules
 TEXTURES	:=	
 TARGET		:=	$(notdir $(CURDIR))
 BUILD		:=	build
-SOURCES		:=	source
+SOURCES		:=	source source/libwiiinput
 DATA		:=	data data/roms
 INCLUDES	:=
 
@@ -54,6 +54,28 @@ LIBDIRS	+= $(PORTLIBS)
 # no real need to edit anything past this point unless you need to add additional
 # rules for different file extensions
 #---------------------------------------------------------------------------------
+# Extra controllers, folded onto the Wii Remote / GameCube pad calls this program already makes (see source/libwiiinput/extrainput.h):
+# USB mouse, pen tablets, uDraw GameTablet and the GameCube adapter for Wii U always; DualShock 3, Wii U Pro Controller
+# and Wii U GamePad once scripts/build_controller_portlibs.sh has built their libraries into ./portlibs/ppc
+export TOPDIR ?= $(CURDIR)
+EXTRA_PORTLIBS	:=	$(TOPDIR)/portlibs/ppc
+CFLAGS		+=	-DHAVE_TABLET -DHAVE_GCADAPTER -I$(TOPDIR)/source/libwiiinput -include extrainput_compat.h
+LDFLAGS		+=	-Wl,--wrap=classic_ctrl_handshake,--wrap=parse_event,--wrap=USB_GetDeviceList
+ifneq ($(wildcard $(EXTRA_PORTLIBS)/lib/libsicksaxis.a),)
+CFLAGS		+=	-DHAVE_SICKSAXIS
+LIBS		:=	-lsicksaxis $(LIBS)
+endif
+ifneq ($(wildcard $(EXTRA_PORTLIBS)/lib/libwupc.a),)
+CFLAGS		+=	-DHAVE_WUPC
+LIBS		:=	-lwupc $(LIBS)
+LDFLAGS		+=	-Wl,-wrap,wiiuse_accept
+endif
+ifneq ($(wildcard $(EXTRA_PORTLIBS)/lib/libwiidrc.a),)
+CFLAGS		+=	-DHAVE_WIIDRC
+LIBS		:=	-lwiidrc $(LIBS)
+endif
+LIBDIRS		+=	$(EXTRA_PORTLIBS)
+
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 #---------------------------------------------------------------------------------
 

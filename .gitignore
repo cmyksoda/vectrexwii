@@ -28,3 +28,4 @@ portlibs-local/
 
 # Local ROM/credits generators -- not needed to build
 tools/
+portlibs/
