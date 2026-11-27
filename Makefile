@@ -7,7 +7,7 @@ ifeq ($(strip $(DEVKITPPC)),)
 $(error "Please set DEVKITPPC in your environment. export DEVKITPPC=<path to>devkitPPC)
 endif
 
-include $(DEVKITPPC)/wii_rules
+include $(DEVKITPRO)/libogc2/wii_rules
 
 #---------------------------------------------------------------------------------
 # TARGET is the name of the output
@@ -34,7 +34,7 @@ LDFLAGS	=	-g $(MACHDEP) -mrvl -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS	:= -lgrrlib -lfreetype -lpngu -lpng -ljpeg -lz -lfat
+LIBS	:= -lgrrlib -lfreetype -lbrotlidec -lbrotlicommon -lbz2 -lpngu -lpng -ljpeg -lz -lfat
 LIBS	+= -lwiiuse
 LIBS	+= -lmodplay -lasnd -laesnd
 LIBS	+= -lbte -logc -lm
@@ -96,6 +96,7 @@ export OFILES	:=	$(addsuffix .o,$(BINFILES)) \
 export INCLUDE	:=	$(foreach dir,$(INCLUDES), -iquote $(CURDIR)/$(dir)) \
 					$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
 					-I$(CURDIR)/portlibs-local/ppc/include/freetype2 \
+					-I$(DEVKITPRO)/portlibs/ppc/include/freetype2 \
 					-I$(CURDIR)/$(BUILD) \
 					-I$(LIBOGC_INC) -I$(PORTLIBS)
 
